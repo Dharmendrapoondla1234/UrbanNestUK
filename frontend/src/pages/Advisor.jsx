@@ -1,231 +1,113 @@
-import { useState, useRef, useEffect } from 'react';
-import { C, T, btn } from '../utils/design.js';
-import { getAdvisorResponse, GeminiError } from '../services/gemini.js';
-import { useAuth } from '../hooks/useAuth.jsx';
-import { useGlobal } from '../hooks/useGlobal.jsx';
-
-const STARTERS = [
-  'What are the best areas in London for first-time buyers under £400k?',
-  'Should I buy or rent in Manchester right now?',
-  'How much stamp duty on a £650,000 property in England?',
-  'Which UK cities have the highest rental yields in 2025?',
-  'What is leasehold vs freehold and which is better?',
-  'Is now a good time to invest in UK property?',
-  'How do I find the best buy-to-let investment?',
-  'What checks should I do before buying a property?',
-];
+import { useState, useEffect, useRef } from 'react';
+import { callGeminiChat } from '../services/gemini.js';
+import { COUNTRIES, GeminiBadge } from '../components/ui.jsx';
+import { C } from '../utils/design.js';
 
 export default function Advisor() {
-  const { user } = useAuth();
-  const { country, city } = useGlobal();
-  const [messages, setMessages] = useState([
-    { role: 'assistant', text: `Hello! I'm your AI property advisor with expertise in global real estate markets. I can help with area recommendations, investment analysis, price guidance, legal processes, financing, and much more.\n\nCurrently focused on: ${country}${city ? ` · ${city}` : ''}.\n\nWhat would you like to know?` }
+  const [msgs, setMsgs] = useState([
+    { role: 'model', content: "Hello! I'm your AI property advisor powered by Gemini. I can help with area recommendations, investment analysis, stamp duty, mortgages, rental yields, neighbourhood insights, and much more — across global markets. What would you like to know?" }
   ]);
-  const [input, setInput]     = useState('');
+  const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState(null);
-  const bottomRef = useRef(null);
-  const inputRef  = useRef(null);
+  const [region, setRegion] = useState('United Kingdom');
+  const endRef = useRef(null);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, loading]);
+  const quickQs = [
+    'Best areas in London under £400k?',
+    'Stamp duty on a £650,000 property?',
+    'Manchester vs Birmingham for investment?',
+    'Average rental yield in Edinburgh?',
+    'Should I buy now or wait in 2025?',
+    'How to buy property as a foreigner in UAE?',
+  ];
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, loading]);
+
+  const inputStyle = { background: '#1a1d26', border: '1px solid rgba(255,255,255,0.1)', color: '#f0f2f8', borderRadius: 8, padding: '9px 12px', fontSize: 13, fontFamily: 'inherit', flex: 1, outline: 'none' };
+  const selectStyle = { ...inputStyle, flex: 'none', width: 160 };
 
   async function send(text) {
-    const q = (text || input).trim();
-    if (!q || loading) return;
+    const msg = text || input.trim();
+    if (!msg) return;
     setInput('');
-    setError(null);
-    const newMessages = [...messages, { role: 'user', text: q }];
-    setMessages(newMessages);
+    const updatedMsgs = [...msgs, { role: 'user', content: msg }];
+    setMsgs(updatedMsgs);
     setLoading(true);
     try {
-      const reply = await getAdvisorResponse(newMessages, { country, city });
-      setMessages(m => [...m, { role: 'assistant', text: reply }]);
+      const history = updatedMsgs.map(m => ({ role: m.role, parts: [{ text: m.content }] }));
+      const sys = `You are an expert property advisor specialising in ${region} real estate with deep knowledge of global markets. Cover: prices, stamp duty, mortgages, rental yields, investment strategies, area analysis, legalities. Be specific, accurate, conversational. Use correct currency (£ UK, $ US/AUS, € Europe).`;
+      const reply = await callGeminiChat(history, sys, 1200);
+      setMsgs(m => [...m, { role: 'model', content: reply }]);
     } catch (e) {
-      const isGeminiErr = e instanceof GeminiError;
-      setError({
-        code: isGeminiErr ? e.code : 'UNKNOWN',
-        message: isGeminiErr ? e.message : `Unexpected error: ${e.message}`,
-      });
-      setMessages(m => [...m, { role: 'assistant', text: '⚠️ ' + (isGeminiErr ? e.message : 'An unexpected error occurred. Please try again.'), isError: true }]);
-    } finally {
-      setLoading(false);
-      inputRef.current?.focus();
+      setMsgs(m => [...m, { role: 'model', content: '⚠ Error: ' + e.message }]);
     }
+    setLoading(false);
   }
-
-  function clearChat() {
-    setMessages([{ role: 'assistant', text: `Chat cleared. I'm ready to help with ${country} property questions. What would you like to know?` }]);
-    setError(null);
-  }
-
-  if (!user) return <AuthGate />;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 58px)', maxWidth: 820, margin: '0 auto', padding: '0 20px' }}>
-      {/* Header */}
-      <div style={{
-        padding: '18px 0 14px', borderBottom: `1px solid ${C.border}`,
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0,
-      }}>
-        <div>
-          <h1 style={{ fontFamily: T.display, fontSize: 22, fontWeight: 900, color: C.text, margin: '0 0 3px', letterSpacing: '-0.5px' }}>
-            ◎ AI Property Advisor
-          </h1>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <span style={{ fontSize: 12, color: C.muted }}>Powered by Gemini · {country}</span>
-            {city && <span style={{ fontSize: 11, color: C.dim }}>· {city}</span>}
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.green, animation: 'blink 2s ease infinite' }} />
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 50px)', maxWidth: 820, margin: '0 auto', padding: '0 16px' }}>
+      <div style={{ padding: '14px 0', borderBottom: `1px solid ${C.border}`, display: 'flex', gap: 10, alignItems: 'center' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 18, fontWeight: 900, color: '#f0f2f8' }}>🤖 AI Property Advisor</span>
+            <GeminiBadge />
           </div>
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>Expert property advice, area insights & investment analysis</div>
         </div>
-        <button onClick={clearChat} style={{ ...btn('ghost', 'sm'), fontSize: 11 }}>Clear Chat</button>
+        <select value={region} onChange={e => setRegion(e.target.value)} style={selectStyle}>
+          {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
       </div>
-      <style>{`@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}`}</style>
 
-      {/* Error banner */}
-      {error && error.code === 'API_KEY_MISSING' && (
-        <div style={{
-          margin: '12px 0 0', padding: '12px 16px', borderRadius: 10, flexShrink: 0,
-          background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)',
-        }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.red, marginBottom: 4 }}>⚠️ Gemini API Key Missing</div>
-          <div style={{ fontSize: 12, color: C.muted }}>Add <code style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: 4 }}>VITE_GEMINI_KEY</code> to your environment variables (Vercel → Settings → Environment Variables) and redeploy.</div>
-        </div>
-      )}
-      {error && error.code === 'AUTH_FAILED' && (
-        <div style={{
-          margin: '12px 0 0', padding: '12px 16px', borderRadius: 10, flexShrink: 0,
-          background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)',
-        }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.red, marginBottom: 4 }}>⚠️ Invalid API Key</div>
-          <div style={{ fontSize: 12, color: C.muted }}>Your Gemini API key appears invalid. Get a free key at <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" style={{ color: C.blue }}>aistudio.google.com</a> and update VITE_GEMINI_KEY.</div>
-        </div>
-      )}
-      {error && error.code === 'RATE_LIMITED' && (
-        <div style={{ margin: '12px 0 0', padding: '10px 14px', borderRadius: 10, flexShrink: 0, background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.25)' }}>
-          <div style={{ fontSize: 12, color: C.amber }}>⏳ Rate limited — please wait a moment and try again.</div>
-        </div>
-      )}
-
-      {/* Messages */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '18px 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {messages.map((m, i) => (
-          <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start', gap: 10 }}>
-            {m.role === 'assistant' && (
-              <div style={{
-                width: 30, height: 30, borderRadius: '50%', flexShrink: 0, marginTop: 4,
-                background: m.isError ? 'rgba(248,113,113,0.2)' : 'linear-gradient(135deg,#4f9eff,#818cf8)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13,
-              }}>◎</div>
-            )}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {msgs.map((m, i) => (
+          <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
             <div style={{
-              maxWidth: '82%',
-              background: m.role === 'user'
-                ? 'linear-gradient(135deg,#4f9eff,#818cf8)'
-                : m.isError ? 'rgba(248,113,113,0.08)' : C.surface,
-              border: m.role === 'user' ? 'none'
-                : m.isError ? '1px solid rgba(248,113,113,0.25)' : `1px solid ${C.border}`,
+              background: m.role === 'user' ? 'linear-gradient(135deg,#4285f4,#34a853)' : '#1a1d26',
+              color: '#f0f2f8',
+              border: m.role === 'user' ? 'none' : `1px solid ${C.border}`,
               borderRadius: m.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-              padding: '12px 16px', fontSize: 14, lineHeight: 1.68, color: C.text,
-              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              padding: '11px 15px', fontSize: 13, maxWidth: '84%', lineHeight: 1.75, whiteSpace: 'pre-wrap',
             }}>
-              {m.text}
+              {m.content}
             </div>
           </div>
         ))}
         {loading && (
-          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <div style={{ width: 30, height: 30, borderRadius: '50%', flexShrink: 0, background: 'linear-gradient(135deg,#4f9eff,#818cf8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>◎</div>
-            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: '16px 16px 16px 4px', padding: '14px 18px' }}>
-              <TypingDots />
+          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+            <div style={{ background: '#1a1d26', border: `1px solid ${C.border}`, borderRadius: '16px 16px 16px 4px', padding: '11px 15px', display: 'flex', gap: 4 }}>
+              {[0,1,2].map(i => <div key={i} style={{ width: 6, height: 6, background: '#4285f4', borderRadius: '50%', animation: `dot 1.2s infinite ${i*0.2}s` }} />)}
             </div>
           </div>
         )}
-        <div ref={bottomRef} />
+        <div ref={endRef} />
       </div>
 
-      {/* Starters */}
-      {messages.length <= 2 && (
-        <div style={{ flexShrink: 0, paddingBottom: 10 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>
-            Try asking…
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {STARTERS.map(q => (
-              <button key={q} onClick={() => send(q)} disabled={loading} style={{
-                padding: '6px 11px', background: 'rgba(79,158,255,0.07)',
-                border: '1px solid rgba(79,158,255,0.18)', borderRadius: 99,
-                fontSize: 11, color: C.muted, cursor: 'pointer', fontFamily: T.body,
-                transition: 'all 0.15s',
-              }}
-                onMouseEnter={e => { e.currentTarget.style.color = C.text; e.currentTarget.style.background = 'rgba(79,158,255,0.14)'; }}
-                onMouseLeave={e => { e.currentTarget.style.color = C.muted; e.currentTarget.style.background = 'rgba(79,158,255,0.07)'; }}
-              >{q}</button>
-            ))}
-          </div>
+      {msgs.length <= 1 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, paddingBottom: 10 }}>
+          {quickQs.map((q, i) => (
+            <button key={i} onClick={() => send(q)} style={{ background: 'transparent', color: C.muted, border: `1px solid ${C.border}`, borderRadius: 8, padding: '7px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+              {q}
+            </button>
+          ))}
         </div>
       )}
 
-      {/* Input */}
-      <div style={{ flexShrink: 0, padding: '10px 0 18px', display: 'flex', gap: 9 }}>
+      <div style={{ padding: '10px 0', borderTop: `1px solid ${C.border}`, display: 'flex', gap: 8 }}>
         <input
-          ref={inputRef}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder={`Ask about property in ${country}…`}
-          disabled={loading}
-          style={{
-            flex: 1, padding: '12px 16px',
-            background: C.surface, border: `1px solid ${error ? 'rgba(248,113,113,0.3)' : C.border}`,
-            borderRadius: 12, color: C.text, fontSize: 14,
-            fontFamily: T.body, outline: 'none', opacity: loading ? 0.7 : 1,
-            transition: 'border-color 0.15s',
-          }}
-          onFocus={e => { if (!error) e.target.style.borderColor = 'rgba(79,158,255,0.5)'; }}
-          onBlur={e => { e.target.style.borderColor = error ? 'rgba(248,113,113,0.3)' : C.border; }}
+          value={input} onChange={e => setInput(e.target.value)}
+          placeholder="Ask anything about property markets, prices, investment..."
+          style={inputStyle}
+          onKeyDown={e => e.key === 'Enter' && !loading && send()}
         />
         <button
           onClick={() => send()}
           disabled={loading || !input.trim()}
-          style={{
-            ...btn('primary', 'md'), flexShrink: 0, fontSize: 13,
-            opacity: loading || !input.trim() ? 0.5 : 1, padding: '12px 20px',
-          }}
+          style={{ background: 'linear-gradient(135deg,#4285f4,#34a853)', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 18px', fontWeight: 700, cursor: 'pointer', flexShrink: 0, opacity: (loading || !input.trim()) ? 0.5 : 1 }}
         >
-          {loading ? '⏳' : 'Send →'}
+          Send
         </button>
       </div>
-    </div>
-  );
-}
-
-function TypingDots() {
-  return (
-    <div style={{ display: 'flex', gap: 5, alignItems: 'center', height: 16 }}>
-      {[0, 1, 2].map(i => (
-        <div key={i} style={{
-          width: 6, height: 6, borderRadius: '50%', background: C.muted,
-          animation: `tdot 1.2s ease-in-out ${i * 0.18}s infinite`,
-        }} />
-      ))}
-      <style>{`@keyframes tdot{0%,80%,100%{transform:translateY(0);opacity:0.5}40%{transform:translateY(-5px);opacity:1}}`}</style>
-    </div>
-  );
-}
-
-function AuthGate() {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - 58px)', gap: 14, padding: 24 }}>
-      <div style={{
-        width: 64, height: 64, borderRadius: 18,
-        background: 'linear-gradient(135deg,#4f9eff,#818cf8)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28,
-        boxShadow: '0 0 40px rgba(79,158,255,0.3)',
-      }}>◎</div>
-      <h2 style={{ fontFamily: T.display, fontSize: 22, fontWeight: 900, color: C.text, margin: 0 }}>Sign in for AI Advisor</h2>
-      <p style={{ color: C.muted, fontSize: 14, margin: 0, textAlign: 'center', maxWidth: 320 }}>
-        Get expert property guidance from our AI advisor, powered by Gemini with global market knowledge.
-      </p>
     </div>
   );
 }

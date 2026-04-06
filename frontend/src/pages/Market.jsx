@@ -1,297 +1,151 @@
 import { useState } from 'react';
-import { C, T, fmt, btn, PROPERTY_TYPES } from '../utils/design.js';
-import { getMarketAnalysis, generateAreasForCity, GeminiError } from '../services/gemini.js';
-import { useAuth } from '../hooks/useAuth.jsx';
-import { useGlobal } from '../hooks/useGlobal.jsx';
-
-const PROFILES = ['First-time buyer', 'Buy-to-let investor', 'Portfolio investor', 'Commercial investor', 'Overseas buyer', 'Homeowner / Upsizer'];
+import { callGemini, parseJSON } from '../services/gemini.js';
+import { COUNTRIES, fmtPrice, AISuggestInput, AIBox, GeminiBadge, Card, SectionTitle } from '../components/ui.jsx';
+import { C } from '../utils/design.js';
 
 export default function Market() {
-  const { user } = useAuth();
-  const { country, cities } = useGlobal();
+  const [country, setCountry] = useState('United Kingdom');
+  const [city, setCity] = useState('');
+  const [propType, setPropType] = useState('');
+  const [timeframe, setTimeframe] = useState('2025');
+  const [query, setQuery] = useState('');
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  const [form, setForm] = useState({
-    city: '', area: '', property_type: '',
-    investor_profile: 'First-time buyer', budget: '',
-  });
-  const [areas, setAreas]           = useState([]);
-  const [areasLoading, setAreasLoading] = useState(false);
-  const [customCity, setCustomCity] = useState('');
-  const [customArea, setCustomArea] = useState('');
-  const [result, setResult]         = useState(null);
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState(null);
+  const inputStyle = { background: '#1a1d26', border: '1px solid rgba(255,255,255,0.1)', color: '#f0f2f8', borderRadius: 8, padding: '9px 12px', fontSize: 13, width: '100%', fontFamily: 'inherit' };
 
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
-  async function loadAreas(city) {
-    setAreasLoading(true);
-    const list = await generateAreasForCity(city, country);
-    setAreas(list);
-    setAreasLoading(false);
-  }
-
-  function handleCityChange(val) {
-    set('city', val);
-    set('area', '');
-    if (val) loadAreas(val);
+  async function getCitySugg(q) {
+    const r = await callGemini(`List 7 real cities in ${country} matching "${q}". Return ONLY JSON array of strings.`, 'Return ONLY JSON array.');
+    return await parseJSON(r) || [];
   }
 
   async function analyse() {
-    const cityVal = customCity || form.city;
-    if (!cityVal) return;
-    setLoading(true);
-    setError(null);
-    setResult(null);
+    setLoading(true); setReport(null);
     try {
-      const r = await getMarketAnalysis({
-        ...form,
-        city: cityVal,
-        area: customArea || form.area,
-        country,
-      });
-      setResult(r);
-    } catch (e) {
-      setError(e instanceof GeminiError ? e : { code: 'UNKNOWN', message: e.message });
-    } finally {
-      setLoading(false);
-    }
+      const r = await callGemini(
+        `Generate comprehensive property market analysis:
+Country: ${country}, City: ${city || 'national overview'}, Property type: ${propType || 'all residential'}, Timeframe: ${timeframe}, Focus: ${query || 'general market overview'}
+
+Return ONLY valid JSON (no markdown):
+{"summary":"2-3 sentence overview","avg_price":number,"price_change_yoy":float,"avg_yield":float,"demand_score":int,"supply_score":int,"investment_score":int,"currency_symbol":"correct","transaction_volume_change":float,"avg_days_on_market":int,"top_areas":[{"area":"","avg_price":number,"change":float,"hotness":"Hot|Warm|Cool","reason":""}],"market_drivers":["4 items"],"risks":["3 items"],"opportunities":["3 items"],"forecast":"12-month outlook","buyer_advice":"specific advice","investor_advice":"specific advice","first_timer_advice":"advice for first-time buyers"}`,
+        'Expert property market analyst with global real estate data. Return ONLY valid JSON, no markdown fences.'
+      );
+      setReport(await parseJSON(r));
+    } catch (e) { console.error(e); }
+    setLoading(false);
   }
 
-  if (!user) return <AuthGate />;
-
-  const sel = {
-    width: '100%', padding: '9px 11px', boxSizing: 'border-box',
-    background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.border}`,
-    borderRadius: 9, color: C.text, fontSize: 13, fontFamily: T.body, outline: 'none',
-  };
-  const lbl = t => <div style={{ fontSize: 10, fontWeight: 700, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 5 }}>{t}</div>;
-  const sym = result?.currency_symbol || '£';
+  const c = report?.currency_symbol || '£';
 
   return (
-    <div style={{ padding: '24px', maxWidth: 1080, margin: '0 auto' }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontFamily: T.display, fontSize: 26, fontWeight: 900, color: C.text, margin: '0 0 5px', letterSpacing: '-0.5px' }}>△ Market Intelligence</h1>
-        <p style={{ color: C.muted, fontSize: 13, margin: 0 }}>AI-generated market analysis for any location globally — demand, supply, growth, risks, and investment verdict</p>
+    <div style={{ padding: 20, maxWidth: 1050, margin: '0 auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 3 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 900, color: '#f0f2f8' }}>📊 Market Analysis</h1>
+        <GeminiBadge />
       </div>
+      <p style={{ color: C.muted, fontSize: 13, marginBottom: 18 }}>Enter any market — Gemini AI generates deep property market intelligence</p>
 
-      {/* Controls */}
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20, marginBottom: 24 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, alignItems: 'end' }}>
-          <div>
-            {lbl('City')}
-            <div style={{ display: 'flex', gap: 6 }}>
-              <select style={{ ...sel, flex: 1, minWidth: 0 }} value={form.city} onChange={e => handleCityChange(e.target.value)}>
-                <option value="">Select…</option>
-                {cities.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <input style={{ ...sel, width: 100, flex: '0 0 100px' }} placeholder="Or type…" value={customCity} onChange={e => setCustomCity(e.target.value)} />
-            </div>
-          </div>
-
-          <div>
-            {lbl('Area')}
-            <div style={{ display: 'flex', gap: 6 }}>
-              <select style={{ ...sel, flex: 1, minWidth: 0 }} value={form.area} onChange={e => set('area', e.target.value)} disabled={areasLoading}>
-                <option value="">{areasLoading ? 'Loading…' : 'Any area'}</option>
-                {areas.map(a => <option key={a} value={a}>{a}</option>)}
-              </select>
-              <input style={{ ...sel, width: 100, flex: '0 0 100px' }} placeholder="Or type…" value={customArea} onChange={e => setCustomArea(e.target.value)} />
-            </div>
-          </div>
-
-          <div>
-            {lbl('Property Focus')}
-            <select style={sel} value={form.property_type} onChange={e => set('property_type', e.target.value)}>
-              <option value="">All Types</option>
-              {PROPERTY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-
-          <div>
-            {lbl('Investor Profile')}
-            <select style={sel} value={form.investor_profile} onChange={e => set('investor_profile', e.target.value)}>
-              {PROFILES.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
-          </div>
-
-          <div>
-            {lbl('Budget Range')}
-            <input style={sel} placeholder="e.g. £200k–£500k" value={form.budget} onChange={e => set('budget', e.target.value)} />
-          </div>
-
-          <button
-            onClick={analyse}
-            disabled={loading || (!form.city && !customCity)}
-            style={{ ...btn('primary', 'lg'), width: '100%', justifyContent: 'center', opacity: loading || (!form.city && !customCity) ? 0.6 : 1 }}
-          >
-            {loading ? '⏳ Analysing…' : '△ Run Analysis'}
-          </button>
+      <Card style={{ padding: 18, marginBottom: 18 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10, marginBottom: 10 }}>
+          <select value={country} onChange={e => setCountry(e.target.value)} style={inputStyle}>
+            {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <AISuggestInput placeholder="City (optional)" value={city} onChange={setCity} fetchSuggestions={getCitySugg} />
+          <select value={propType} onChange={e => setPropType(e.target.value)} style={inputStyle}>
+            <option value="">All types</option>
+            {['Residential','Flat/Apartment','House','Luxury','Commercial','Buy-to-Let','New Build'].map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <input value={timeframe} onChange={e => setTimeframe(e.target.value)} placeholder="Timeframe e.g. 2025, Q2 2025" style={inputStyle} />
         </div>
+        <input value={query} onChange={e => setQuery(e.target.value)} placeholder='Focus: e.g. "buy-to-let investment potential", "first-time buyer affordability", "new build demand"...' style={{ ...inputStyle, marginBottom: 10 }} />
+        <button
+          onClick={analyse}
+          style={{ width: '100%', padding: 12, fontSize: 14, background: 'linear-gradient(135deg,#4285f4,#34a853)', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, cursor: 'pointer' }}
+        >
+          {loading ? '✦ Gemini Analysing...' : '📊 Generate Market Report'}
+        </button>
+      </Card>
 
-        {error && (
-          <div style={{ marginTop: 14, padding: '10px 14px', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 9 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.red }}>{error.code?.replace(/_/g,' ')} — {error.message}</div>
-          </div>
-        )}
-      </div>
-
-      {/* Loading */}
       {loading && (
-        <div style={{ textAlign: 'center', padding: '60px 0' }}>
-          <div style={{ fontSize: 40, marginBottom: 14, animation: 'spin 2s linear infinite', display: 'inline-block' }}>△</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: C.muted }}>AI analysing {customCity || form.city} market…</div>
-          <div style={{ fontSize: 13, color: C.dim, marginTop: 6 }}>Gathering demand, supply, price trends, risks…</div>
-          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        <div style={{ textAlign: 'center', padding: 48 }}>
+          <div style={{ width: 32, height: 32, border: '3px solid rgba(66,133,244,0.3)', borderTopColor: '#4285f4', borderRadius: '50%', animation: 'spin 0.7s linear infinite', margin: '0 auto 12px' }} />
+          <div style={{ color: C.muted }}>Gemini AI is generating market intelligence...</div>
         </div>
       )}
 
-      {/* Results */}
-      {result && !loading && <MarketResults r={result} sym={sym} city={customCity || form.city} area={customArea || form.area} />}
-
-      {!result && !loading && (
-        <div style={{ textAlign: 'center', padding: '60px 0' }}>
-          <div style={{ fontSize: 52, marginBottom: 14 }}>△</div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: C.muted, fontFamily: T.display }}>Select a city to begin</div>
-          <div style={{ fontSize: 13, color: C.dim, marginTop: 6 }}>AI will generate comprehensive market intelligence for any global location</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function MarketResults({ r, sym, city, area }) {
-  const phaseColor = { 'Boom': C.green, 'Growth': C.teal, 'Stable': C.blue, 'Correction': C.amber, 'Recovery': C.purple }[r.market_phase] || C.muted;
-  const demandColor = { 'Very High': C.green, 'High': C.teal, 'Moderate': C.blue, 'Low': C.amber }[r.demand_level] || C.muted;
-
-  return (
-    <div>
-      {/* Overview hero */}
-      <div style={{
-        background: 'linear-gradient(135deg,rgba(79,158,255,0.09),rgba(129,140,248,0.09))',
-        border: '1px solid rgba(79,158,255,0.2)', borderRadius: 16, padding: 24, marginBottom: 20,
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: T.display, fontSize: 22, fontWeight: 900, color: C.text, margin: '0 0 6px', letterSpacing: '-0.5px' }}>
-              {area ? `${area}, ` : ''}{city}
+      {report && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <AIBox>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <GeminiBadge />
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#4285f4' }}>Market Overview — {country}{city ? ' · ' + city : ''}</span>
             </div>
-            <p style={{ color: C.muted, fontSize: 14, margin: 0, lineHeight: 1.65, maxWidth: 600 }}>{r.market_summary}</p>
-          </div>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 11, color: C.dim, marginBottom: 5 }}>Investment Score</div>
-            <div style={{ fontFamily: T.display, fontSize: 36, fontWeight: 900, color: C.amber, letterSpacing: '-1px' }}>{r.investment_score}<span style={{ fontSize: 16 }}>/10</span></div>
-            <div style={{ fontSize: 11, color: phaseColor, fontWeight: 700, marginTop: 4 }}>{r.market_phase}</div>
-          </div>
-        </div>
-      </div>
+            <div style={{ fontSize: 13, color: '#c8d4e8', lineHeight: 1.75 }}>{report.summary}</div>
+          </AIBox>
 
-      {/* Metrics */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
-        {[
-          { icon: '💷', label: 'Avg Price', value: `${sym}${r.avg_price?.toLocaleString()}` },
-          { icon: '📐', label: 'Avg £/sqft', value: `${sym}${r.avg_price_sqft?.toLocaleString()}` },
-          { icon: '📈', label: '1yr Growth', value: `+${r.price_change_1y_pct}%`, color: C.green },
-          { icon: '📊', label: '5yr Growth', value: `+${r.price_change_5y_pct}%`, color: C.teal },
-          { icon: '💼', label: 'Rental Yield', value: `${r.avg_rental_yield}%`, color: C.cyan },
-          { icon: '🔥', label: 'Demand', value: r.demand_level, color: demandColor },
-          { icon: '🏗', label: 'Supply', value: r.supply_level },
-          { icon: '📉', label: 'Price 5yr Forecast', value: `+${r.price_forecast?.['5yr']}%`, color: C.purple },
-        ].map(m => (
-          <div key={m.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '14px 15px' }}>
-            <div style={{ fontSize: 18, marginBottom: 7 }}>{m.icon}</div>
-            <div style={{ fontFamily: T.display, fontSize: 16, fontWeight: 900, color: m.color || C.text, letterSpacing: '-0.3px' }}>{m.value || '—'}</div>
-            <div style={{ fontSize: 10, color: C.dim, marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{m.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* 3-col grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 20 }}>
-        {/* Drivers */}
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 18 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 12 }}>Market Drivers</div>
-          {r.key_drivers?.map((d, i) => (
-            <div key={i} style={{ padding: '7px 0', borderBottom: `1px solid ${C.border}` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                <span style={{ fontSize: 12, color: C.muted, flex: 1 }}>{d.driver}</span>
-                <span style={{ fontSize: 10, fontWeight: 700, color: d.impact === 'Positive' ? C.green : C.red, marginLeft: 8 }}>{d.impact}</span>
-              </div>
-              <span style={{ fontSize: 10, color: C.dim }}>{d.magnitude} impact</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Risks */}
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 18 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 12 }}>Risk Factors</div>
-          {r.risks?.map((risk, i) => (
-            <div key={i} style={{ padding: '7px 0', borderBottom: `1px solid ${C.border}` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                <span style={{ fontSize: 12, color: C.muted, flex: 1 }}>{risk.risk}</span>
-                <span style={{ fontSize: 10, fontWeight: 700, color: risk.severity === 'Low' ? C.green : risk.severity === 'High' ? C.red : C.amber }}>{risk.severity}</span>
-              </div>
-              <span style={{ fontSize: 10, color: C.dim }}>{risk.timeline}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Developments */}
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 18 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 12 }}>Upcoming Projects</div>
-          {r.upcoming_developments?.map((d, i) => (
-            <div key={i} style={{ padding: '7px 0', borderBottom: `1px solid ${C.border}` }}>
-              <div style={{ fontSize: 12, color: C.muted, marginBottom: 2 }}>{d.project}</div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 10, color: C.teal }}>{d.impact}</span>
-                <span style={{ fontSize: 10, color: C.dim }}>{d.year}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Top growth areas */}
-      {r.top_growth_areas?.length > 0 && (
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 18, marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 12 }}>Top Growth Areas</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
-            {r.top_growth_areas.map((a, i) => (
-              <div key={i} style={{ padding: '10px 12px', background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.15)', borderRadius: 10 }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{a.area}</div>
-                <div style={{ fontSize: 12, color: C.green, fontWeight: 700 }}>+{a.growth_pct}% forecast</div>
-                <div style={{ fontSize: 11, color: C.dim, marginTop: 3 }}>{a.reason}</div>
-              </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: 9 }}>
+            {[
+              ['Avg Price', fmtPrice(report.avg_price, c), '#f0f2f8'],
+              ['YoY Change', (report.price_change_yoy >= 0 ? '+' : '') + report.price_change_yoy + '%', report.price_change_yoy >= 0 ? '#34a853' : '#ea4335'],
+              ['Avg Yield', report.avg_yield + '%', '#4285f4'],
+              ['Demand', report.demand_score + '/10', '#8b5cf6'],
+              ['Supply', report.supply_score + '/10', '#fbbc04'],
+              ['Investment', report.investment_score + '/10', '#34a853'],
+              report.avg_days_on_market ? ['Days on Market', report.avg_days_on_market + 'd', C.muted] : null,
+              report.transaction_volume_change ? ['Vol Change', (report.transaction_volume_change >= 0 ? '+' : '') + report.transaction_volume_change + '%', report.transaction_volume_change >= 0 ? '#34a853' : '#ea4335'] : null,
+            ].filter(Boolean).map(([l, v, col]) => (
+              <Card key={l} style={{ padding: '12px 10px', textAlign: 'center' }}>
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 3 }}>{l}</div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: col }}>{v}</div>
+              </Card>
             ))}
           </div>
+
+          {report.top_areas?.length > 0 && (
+            <Card style={{ padding: 16 }}>
+              <SectionTitle>Top Performing Areas</SectionTitle>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(190px,1fr))', gap: 9 }}>
+                {report.top_areas.map((a, i) => (
+                  <div key={i} style={{ background: '#1a1d26', borderRadius: 8, padding: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#f0f2f8' }}>{a.area}</div>
+                      {a.hotness && <span style={{ background: a.hotness === 'Hot' ? 'rgba(234,67,53,0.15)' : 'rgba(66,133,244,0.12)', color: a.hotness === 'Hot' ? '#ea4335' : '#4285f4', padding: '2px 7px', borderRadius: 99, fontSize: 10, fontWeight: 700 }}>{a.hotness}</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#4285f4', marginBottom: 2 }}>{fmtPrice(a.avg_price, c)}</div>
+                    <div style={{ fontSize: 11, color: a.change >= 0 ? '#34a853' : '#ea4335', marginBottom: 3 }}>{a.change >= 0 ? '▲' : '▼'} {Math.abs(a.change)}% YoY</div>
+                    <div style={{ fontSize: 11, color: '#4a5568' }}>{a.reason}</div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            {[['🚀 Market Drivers', '#34a853', report.market_drivers], ['⚠ Risks', '#ea4335', report.risks], ['💡 Opportunities', '#4285f4', report.opportunities]].map(([title, col, items]) => (
+              <Card key={title} style={{ padding: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: col, marginBottom: 8 }}>{title}</div>
+                {(items || []).map((item, i) => <div key={i} style={{ fontSize: 12, color: C.muted, marginBottom: 4, lineHeight: 1.5 }}>• {item}</div>)}
+              </Card>
+            ))}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            {[['🏠 Buyer Advice', report.buyer_advice], ['💼 Investor Advice', report.investor_advice], ['🔑 First-Timer', report.first_timer_advice]].map(([t, txt]) => (
+              <Card key={t} style={{ padding: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#4285f4', marginBottom: 6 }}>{t}</div>
+                <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.7 }}>{txt || '—'}</div>
+              </Card>
+            ))}
+          </div>
+
+          {report.forecast && (
+            <AIBox>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#8b5cf6', marginBottom: 6 }}>🔮 12-Month Outlook</div>
+              <div style={{ fontSize: 13, color: '#c8d4e8', lineHeight: 1.7 }}>{report.forecast}</div>
+            </AIBox>
+          )}
         </div>
       )}
-
-      {/* Advice */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        {r.buyer_advice && (
-          <div style={{ background: 'rgba(79,158,255,0.07)', border: '1px solid rgba(79,158,255,0.18)', borderRadius: 14, padding: 18 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.blue, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 9 }}>Buyer Advice</div>
-            <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.65 }}>{r.buyer_advice}</div>
-          </div>
-        )}
-        {r.investor_verdict && (
-          <div style={{ background: 'rgba(52,211,153,0.07)', border: '1px solid rgba(52,211,153,0.18)', borderRadius: 14, padding: 18 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.green, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 9 }}>Investment Verdict</div>
-            <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.65 }}>{r.investor_verdict}</div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function AuthGate() {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - 58px)', gap: 14 }}>
-      <div style={{ fontSize: 52 }}>△</div>
-      <h2 style={{ fontFamily: T.display, fontSize: 22, fontWeight: 900, color: C.text, margin: 0 }}>Sign in for Market Intelligence</h2>
-      <p style={{ color: C.muted, fontSize: 14, margin: 0 }}>AI-powered market analysis for any city globally</p>
     </div>
   );
 }
