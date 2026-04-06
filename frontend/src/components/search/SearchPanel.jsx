@@ -7,6 +7,13 @@ export default function SearchPanel({ onSearch, initialParams = {}, compact = fa
   const { country, city: globalCity } = useGlobal();
   const [query, setQuery]         = useState(initialParams.query || '');
   const [city, setCity]           = useState(initialParams.city || globalCity || '');
+
+  // FIX: sync local city when Navbar global city changes (only if user hasn't set a custom city)
+  useEffect(() => {
+    if (globalCity && !initialParams.city) {
+      setCity(globalCity);
+    }
+  }, [globalCity]); // eslint-disable-line react-hooks/exhaustive-deps
   const [type, setType]           = useState(initialParams.type || '');
   const [minPrice, setMinPrice]   = useState(initialParams.min_price || '');
   const [maxPrice, setMaxPrice]   = useState(initialParams.max_price || '');

@@ -1,43 +1,105 @@
-import { C } from '../../utils/design.js';
-import { fmtPrice, PROP_IMGS } from '../ui.jsx';
+import { useState } from 'react';
+import { C, T, fmt, badge } from '../../utils/design.js';
+import { getCurrency } from '../../services/api.js';
 
-export default function PropertyCard({ p, onClick }) {
-  const curr = p.currency_symbol || '£';
-  const img = p.images?.[0] || PROP_IMGS[Math.abs(p.id || 0) % PROP_IMGS.length];
+export default function PropertyCard({ property: p, onClick, country = 'United Kingdom' }) {
+  const [imgIdx, setImgIdx] = useState(0);
+  const { symbol } = getCurrency(country);
+  const imgs = p.images || [];
+  const img = imgs[imgIdx] || 'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?w=600&q=80';
+
+  const availColor = { 'Available Now': C.green, 'Under Offer': C.amber, 'Coming Soon': C.blue, 'New Build': C.purple }[p.availability] || C.muted;
+
+  function openMaps(e) {
+    e.stopPropagation();
+    if (p.lat && p.lng) {
+      window.open(`https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`, '_blank');
+    } else if (p.address) {
+      window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.address)}`, '_blank');
+    }
+  }
 
   return (
     <div
-      onClick={onClick}
+      onClick={() => onClick?.(p)}
       style={{
-        background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12,
-        overflow: 'hidden', cursor: 'pointer', transition: 'all 0.2s',
+        background: C.card, border: `1px solid ${C.border}`,
+        borderRadius: 14, overflow: 'hidden', cursor: 'pointer',
+        transition: 'all 0.2s',
       }}
-      onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(66,133,244,0.4)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.transform = ''; }}
+      onMouseEnter={e => {
+        e.currentTarget.style.borderColor = 'rgba(79,158,255,0.4)';
+        e.currentTarget.style.transform = 'translateY(-2px)';
+        e.currentTarget.style.boxShadow = '0 12px 40px rgba(0,0,0,0.5)';
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.borderColor = C.border;
+        e.currentTarget.style.transform = 'none';
+        e.currentTarget.style.boxShadow = 'none';
+      }}
     >
-      <div style={{ height: 178, overflow: 'hidden', position: 'relative' }}>
-        <img src={img} alt={p.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.src = PROP_IMGS[0]; }} />
-        <div style={{ position: 'absolute', top: 8, left: 8 }}>
-          <span style={{ background: 'rgba(0,0,0,0.72)', color: '#f0f2f8', padding: '3px 9px', borderRadius: 99, fontSize: 11, fontWeight: 700 }}>🏠 {p.type}</span>
-        </div>
-        {p.verified && (
-          <div style={{ position: 'absolute', top: 8, right: 8 }}>
-            <span style={{ background: 'rgba(52,168,83,0.9)', color: '#fff', padding: '3px 9px', borderRadius: 99, fontSize: 11, fontWeight: 700 }}>✓ Verified</span>
+      {/* Image */}
+      <div style={{ position: 'relative', height: 195, overflow: 'hidden', background: C.surface }}>
+        <img src={img} alt={p.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          onError={e => { e.target.src = 'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?w=600&q=80'; }} />
+        {imgs.length > 1 && (
+          <div style={{ position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 4 }}>
+            {imgs.map((_, i) => (
+              <button key={i} onClick={e => { e.stopPropagation(); setImgIdx(i); }} style={{
+                width: 5, height: 5, borderRadius: '50%', border: 'none', cursor: 'pointer', padding: 0,
+                background: i === imgIdx ? '#fff' : 'rgba(255,255,255,0.4)',
+              }} />
+            ))}
           </div>
         )}
-      </div>
-      <div style={{ padding: 14 }}>
-        <div style={{ fontSize: 19, fontWeight: 900, color: '#f0f2f8', marginBottom: 1 }}>{fmtPrice(p.price, curr)}</div>
-        <div style={{ fontSize: 12, color: C.muted, marginBottom: 6 }}>📍 {p.area || p.city || ''}</div>
-        <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', marginBottom: 8, lineHeight: 1.35 }}>{p.title}</div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-          {p.bedrooms > 0 && <span style={{ fontSize: 11, color: C.muted }}>🛏 {p.bedrooms} bed</span>}
-          {p.bathrooms > 0 && <span style={{ fontSize: 11, color: C.muted }}>🚿 {p.bathrooms} bath</span>}
-          {p.area_sqft && <span style={{ fontSize: 11, color: C.muted }}>{p.area_sqft} sqft</span>}
+        {/* Badges */}
+        <div style={{ position: 'absolute', top: 9, left: 9, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+          <span style={{ ...badge(availColor), fontSize: 9 }}>{p.availability}</span>
+          {p.featured && <span style={{ ...badge(C.amber), fontSize: 9 }}>⭐ Featured</span>}
+          {p.verified && <span style={{ ...badge(C.green), fontSize: 9 }}>✓ Verified</span>}
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ color: '#fbbc04', fontSize: 12 }}>{'★'.repeat(Math.min(5, Math.round(p.rating || 4)))}</span>
-          <span style={{ fontSize: 11, color: '#4285f4', fontWeight: 700 }}>{p.city}</span>
+        {p.has_virtual_tour && (
+          <div style={{ position: 'absolute', top: 9, right: 9, ...badge(C.purple), fontSize: 9 }}>360°</div>
+        )}
+        {/* Navigate button */}
+        <button
+          onClick={openMaps}
+          style={{
+            position: 'absolute', bottom: 9, right: 9,
+            background: 'rgba(7,9,16,0.8)', backdropFilter: 'blur(8px)',
+            border: `1px solid rgba(79,158,255,0.3)`,
+            borderRadius: 7, padding: '4px 8px',
+            color: C.blue, fontSize: 10, fontWeight: 700, fontFamily: T.body,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+          }}
+          title="Open in Google Maps"
+        >
+          ◎ Navigate
+        </button>
+      </div>
+
+      {/* Content */}
+      <div style={{ padding: '13px 14px' }}>
+        <div style={{ fontSize: 17, fontWeight: 900, color: C.text, marginBottom: 3, fontFamily: T.display, letterSpacing: '-0.3px' }}>
+          {fmt(p.price, symbol)}
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 7, lineHeight: 1.3 }}>{p.title}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: C.dim, marginBottom: 9 }}>
+          <span>📍</span>
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.area}, {p.city}</span>
+        </div>
+        <div style={{ display: 'flex', gap: 10, fontSize: 11, color: C.muted, marginBottom: 9, flexWrap: 'wrap' }}>
+          {p.bedrooms > 0 && <span>🛏 {p.bedrooms}</span>}
+          {p.bathrooms > 0 && <span>🚿 {p.bathrooms}</span>}
+          <span>📐 {p.area_sqft?.toLocaleString()} sqft</span>
+          {p.epc_rating && <span>🌿 {p.epc_rating}</span>}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: `1px solid ${C.border}`, paddingTop: 9 }}>
+          <span style={{ fontSize: 10, color: C.dim }}>{p.tenure}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <span style={{ color: C.amber, fontSize: 11 }}>★</span>
+            <span style={{ fontSize: 11, color: C.muted, fontWeight: 700 }}>{p.rating?.toFixed(1)}</span>
+          </div>
         </div>
       </div>
     </div>
