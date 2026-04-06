@@ -1,56 +1,56 @@
 import { useState } from 'react';
-import { C, T, fmt, btn, PROPERTY_TYPES, UK_CITIES } from '../utils/design.js';
-import { getPriceEstimate, getAIPricePrediction } from '../services/api.js';
+import { C, T, fmt, btn, PROPERTY_TYPES } from '../utils/design.js';
+import { getPricePrediction, generateAreasForCity, GeminiError } from '../services/gemini.js';
 import { useAuth } from '../hooks/useAuth.jsx';
+import { useGlobal } from '../hooks/useGlobal.jsx';
+
+const CONDITIONS = ['New Build', 'Excellent', 'Good', 'Fair', 'Needs Work'];
+const PARKING_OPT = ['None', 'On-street', 'Allocated Space', 'Garage', 'Double Garage'];
 
 export default function Predict() {
   const { user } = useAuth();
-  const [form, setForm] = useState({
-    city: 'London', area: '', property_type: 'Flat',
-    area_sqft: '', bedrooms: '', age: '0',
-  });
-  const [result, setResult] = useState(null);
-  const [aiInsight, setAiInsight] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false);
+  const { country, city: globalCity, cities } = useGlobal();
 
-  const CITY_AREAS = {
-    London: ['Canary Wharf', 'Shoreditch', 'Kensington', 'Chelsea', 'Brixton', 'Hackney', 'Islington', 'Clapham', 'Notting Hill', 'Greenwich'],
-    Manchester: ['Ancoats', 'Didsbury', 'Salford Quays', 'Chorlton', 'Deansgate', 'Northern Quarter'],
-    Birmingham: ['Edgbaston', 'Moseley', 'Digbeth', 'Harborne', 'Jewellery Quarter'],
-    Leeds: ['Chapel Allerton', 'Headingley', 'Hyde Park', 'Roundhay', 'Horsforth'],
-    Edinburgh: ['New Town', 'Old Town', 'Leith', 'Morningside', 'Stockbridge'],
-    Bristol: ['Clifton', 'Redland', 'Stokes Croft', 'Harbourside', 'Bedminster'],
-    Liverpool: ['Baltic Triangle', 'Anfield', 'Allerton', 'Wavertree', 'Sefton Park'],
-    Oxford: ['Jericho', 'Cowley', 'Summertown', 'Headington', 'Botley'],
-  };
+  const [form, setForm] = useState({
+    city: globalCity || '', area: '',
+    property_type: 'Flat', size_sqft: '', bedrooms: '',
+    bathrooms: '', age_years: '', condition: 'Good',
+    floor: '', parking: 'None', garden: false,
+    features: '',
+  });
+  const [areas, setAreas]       = useState([]);
+  const [areasLoading, setAreasLoading] = useState(false);
+  const [result, setResult]     = useState(null);
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState(null);
+  const [customCity, setCustomCity] = useState('');
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  async function estimate() {
-    if (!form.area_sqft) return;
+  async function loadAreas(city) {
+    setAreasLoading(true);
+    const list = await generateAreasForCity(city, country);
+    setAreas(list);
+    setAreasLoading(false);
+  }
+
+  function handleCityChange(val) {
+    set('city', val);
+    set('area', '');
+    if (val) loadAreas(val);
+  }
+
+  async function runPrediction() {
+    const cityVal = customCity || form.city;
+    if (!cityVal || !form.property_type) return;
     setLoading(true);
+    setError(null);
     setResult(null);
-    setAiInsight('');
     try {
-      const r = await getPriceEstimate({
-        city: form.city,
-        area: form.area || CITY_AREAS[form.city]?.[0] || form.city,
-        property_type: form.property_type,
-        area_sqft: form.area_sqft,
-        bedrooms: form.bedrooms || undefined,
-        age: form.age || 0,
-      });
+      const r = await getPricePrediction({ ...form, city: cityVal, country });
       setResult(r);
-      if (user) {
-        setAiLoading(true);
-        getAIPricePrediction(form, r)
-          .then(setAiInsight)
-          .catch(() => {})
-          .finally(() => setAiLoading(false));
-      }
     } catch (e) {
-      console.error(e);
+      setError(e instanceof GeminiError ? e : { code: 'UNKNOWN', message: e.message });
     } finally {
       setLoading(false);
     }
@@ -58,178 +58,152 @@ export default function Predict() {
 
   if (!user) return <AuthGate />;
 
-  const inputStyle = {
-    width: '100%', padding: '10px 12px',
-    background: 'rgba(255,255,255,0.04)',
-    border: `1px solid ${C.border}`,
-    borderRadius: 8, color: C.text,
-    fontSize: 13, fontFamily: T.body,
-    outline: 'none', boxSizing: 'border-box',
+  const sel = {
+    width: '100%', padding: '9px 11px', boxSizing: 'border-box',
+    background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.border}`,
+    borderRadius: 9, color: C.text, fontSize: 13, fontFamily: T.body, outline: 'none',
   };
+  const inp = { ...sel };
+  const lbl = t => <div style={{ fontSize: 10, fontWeight: 700, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 5 }}>{t}</div>;
 
-  const lbl = text => (
-    <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>{text}</div>
-  );
+  const sym = result?.currency_symbol || '£';
 
   return (
-    <div style={{ padding: '28px 24px', maxWidth: 900, margin: '0 auto' }}>
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontFamily: T.display, fontSize: 28, fontWeight: 900, color: C.text, margin: '0 0 6px', letterSpacing: '-0.5px' }}>
-          💰 Price Prediction
+    <div style={{ padding: '24px', maxWidth: 960, margin: '0 auto' }}>
+      <div style={{ marginBottom: 24 }}>
+        <h1 style={{ fontFamily: T.display, fontSize: 26, fontWeight: 900, color: C.text, margin: '0 0 5px', letterSpacing: '-0.5px' }}>
+          ◇ AI Price Prediction
         </h1>
-        <p style={{ color: C.muted, fontSize: 13, margin: 0 }}>AI-powered property valuation for the UK market</p>
+        <p style={{ color: C.muted, fontSize: 13, margin: 0 }}>Enter any property details — AI generates a live valuation with investment analysis</p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 28 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, alignItems: 'start' }}>
         {/* Form */}
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
-          <h3 style={{ fontFamily: T.display, fontSize: 16, fontWeight: 800, color: C.text, margin: '0 0 20px' }}>Property Details</h3>
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 22 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.text, fontFamily: T.display, marginBottom: 18 }}>Property Parameters</div>
 
-          <div style={{ display: 'grid', gap: 14 }}>
+          <div style={{ display: 'grid', gap: 12 }}>
+            {/* City — free text OR dropdown */}
             <div>
               {lbl('City')}
-              <select style={inputStyle} value={form.city} onChange={e => { set('city', e.target.value); set('area', ''); }}>
-                {UK_CITIES.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <div style={{ display: 'flex', gap: 7 }}>
+                <select style={{ ...sel, flex: 1 }} value={form.city} onChange={e => handleCityChange(e.target.value)}>
+                  <option value="">Select city…</option>
+                  {cities.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <input style={{ ...inp, width: 120, flex: '0 0 120px' }} placeholder="Or type any…"
+                  value={customCity} onChange={e => setCustomCity(e.target.value)} />
+              </div>
             </div>
 
+            {/* Area */}
             <div>
-              {lbl('Area')}
-              <select style={inputStyle} value={form.area} onChange={e => set('area', e.target.value)}>
-                <option value="">Select area…</option>
-                {(CITY_AREAS[form.city] || []).map(a => <option key={a} value={a}>{a}</option>)}
-              </select>
+              {lbl('Area / Neighbourhood')}
+              <div style={{ display: 'flex', gap: 7 }}>
+                <select style={{ ...sel, flex: 1 }} value={form.area} onChange={e => set('area', e.target.value)} disabled={areasLoading}>
+                  <option value="">{areasLoading ? 'Loading AI areas…' : 'Select area…'}</option>
+                  {areas.map(a => <option key={a} value={a}>{a}</option>)}
+                </select>
+                <input style={{ ...inp, width: 120, flex: '0 0 120px' }} placeholder="Or type any…"
+                  value={form.area} onChange={e => set('area', e.target.value)} />
+              </div>
             </div>
 
             <div>
               {lbl('Property Type')}
-              <select style={inputStyle} value={form.property_type} onChange={e => set('property_type', e.target.value)}>
+              <select style={sel} value={form.property_type} onChange={e => set('property_type', e.target.value)}>
                 {PROPERTY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
 
-            <div>
-              {lbl('Size (sqft)')}
-              <input style={inputStyle} type="number" placeholder="e.g. 850" value={form.area_sqft} onChange={e => set('area_sqft', e.target.value)} />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div>
+                {lbl('Size (sqft)')}
+                <input style={inp} type="number" placeholder="e.g. 850" value={form.size_sqft} onChange={e => set('size_sqft', e.target.value)} />
+              </div>
               <div>
                 {lbl('Bedrooms')}
-                <select style={inputStyle} value={form.bedrooms} onChange={e => set('bedrooms', e.target.value)}>
+                <select style={sel} value={form.bedrooms} onChange={e => set('bedrooms', e.target.value)}>
                   <option value="">N/A</option>
-                  {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
+                  {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+              <div>
+                {lbl('Bathrooms')}
+                <select style={sel} value={form.bathrooms} onChange={e => set('bathrooms', e.target.value)}>
+                  <option value="">N/A</option>
+                  {[1,2,3,4].map(n => <option key={n} value={n}>{n}</option>)}
                 </select>
               </div>
               <div>
                 {lbl('Age (years)')}
-                <select style={inputStyle} value={form.age} onChange={e => set('age', e.target.value)}>
-                  {[0, 1, 5, 10, 20, 30, 50].map(n => <option key={n} value={n}>{n === 0 ? 'New build' : `${n}yr`}</option>)}
-                </select>
+                <input style={inp} type="number" placeholder="0 = new build" value={form.age_years} onChange={e => set('age_years', e.target.value)} />
               </div>
             </div>
 
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div>
+                {lbl('Condition')}
+                <select style={sel} value={form.condition} onChange={e => set('condition', e.target.value)}>
+                  {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                {lbl('Floor')}
+                <input style={inp} placeholder="e.g. Ground, 3rd…" value={form.floor} onChange={e => set('floor', e.target.value)} />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div>
+                {lbl('Parking')}
+                <select style={sel} value={form.parking} onChange={e => set('parking', e.target.value)}>
+                  {PARKING_OPT.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingTop: 18 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: C.muted }}>
+                  <input type="checkbox" checked={form.garden} onChange={e => set('garden', e.target.checked)}
+                    style={{ width: 15, height: 15, accentColor: C.blue }} />
+                  Garden / Outdoor
+                </label>
+              </div>
+            </div>
+
+            <div>
+              {lbl('Additional Features (optional)')}
+              <input style={inp} placeholder="e.g. Balcony, Smart home, Period features, EPC A…"
+                value={form.features} onChange={e => set('features', e.target.value)} />
+            </div>
+
+            {error && (
+              <div style={{ padding: '10px 14px', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 9 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.red, marginBottom: 3 }}>⚠️ {error.code?.replace(/_/g,' ')}</div>
+                <div style={{ fontSize: 12, color: C.muted }}>{error.message}</div>
+              </div>
+            )}
+
             <button
-              onClick={estimate}
-              disabled={loading || !form.area_sqft}
-              style={{
-                ...btn('primary', 'lg'),
-                width: '100%', justifyContent: 'center',
-                background: 'linear-gradient(135deg,#3b8cf8,#8b5cf6)',
-                opacity: loading || !form.area_sqft ? 0.6 : 1,
-                marginTop: 6,
-              }}
+              onClick={runPrediction}
+              disabled={loading || (!form.city && !customCity)}
+              style={{ ...btn('primary', 'lg'), width: '100%', justifyContent: 'center', marginTop: 4, opacity: loading || (!form.city && !customCity) ? 0.6 : 1 }}
             >
-              {loading ? '⏳ Estimating…' : '🔮 Get Price Estimate'}
+              {loading ? '⏳ AI Valuing Property…' : '🔮 Generate Valuation'}
             </button>
           </div>
         </div>
 
         {/* Results */}
         <div>
-          {result ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {/* Main price */}
-              <div style={{
-                background: 'linear-gradient(135deg,rgba(59,140,248,0.12),rgba(139,92,246,0.12))',
-                border: '1px solid rgba(59,140,248,0.25)',
-                borderRadius: 16, padding: 24, textAlign: 'center',
-              }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: C.blue, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>Estimated Price</div>
-                <div style={{ fontFamily: T.display, fontSize: 42, fontWeight: 900, color: C.text, letterSpacing: '-2px' }}>{fmt(result.predicted_price)}</div>
-                <div style={{ fontSize: 13, color: C.muted, marginTop: 6 }}>
-                  Range: {fmt(result.price_range_low)} – {fmt(result.price_range_high)}
-                </div>
-                <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>
-                  Confidence: {result.confidence}% · £{result.price_per_sqft}/sqft
-                </div>
-              </div>
-
-              {/* Investment metrics */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                {[
-                  { label: 'Rental Yield', value: `${result.rental_yield_pct}%`, icon: '📈' },
-                  { label: 'Monthly Rental', value: fmt(result.estimated_monthly_rental).replace('£', '£') + '/mo', icon: '🏠' },
-                  { label: 'Breakeven', value: `${result.breakeven_years} yrs`, icon: '⚖️' },
-                  { label: 'Market Trend', value: result.market_trend, icon: '📊' },
-                ].map(m => (
-                  <div key={m.label} style={{
-                    background: C.surface, border: `1px solid ${C.border}`,
-                    borderRadius: 12, padding: '14px 16px',
-                  }}>
-                    <div style={{ fontSize: 18, marginBottom: 6 }}>{m.icon}</div>
-                    <div style={{ fontFamily: T.display, fontSize: 17, fontWeight: 900, color: C.text }}>{m.value}</div>
-                    <div style={{ fontSize: 11, color: C.dim, marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{m.label}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Stamp duty */}
-              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>
-                  Stamp Duty (SDLT): <span style={{ color: C.amber }}>{fmt(result.stamp_duty_estimate)}</span>
-                </div>
-                <div style={{ fontSize: 12, color: C.dim }}>Based on standard residential purchase rates</div>
-              </div>
-
-              {/* AI Insight */}
-              {aiLoading ? (
-                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
-                  <div style={{ fontSize: 12, color: C.muted }}>🤖 Generating AI analysis…</div>
-                </div>
-              ) : aiInsight ? (
-                <div style={{
-                  background: 'linear-gradient(135deg,rgba(59,140,248,0.08),rgba(139,92,246,0.08))',
-                  border: '1px solid rgba(59,140,248,0.2)',
-                  borderRadius: 12, padding: 16,
-                }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: C.blue, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>🤖 AI Analysis</div>
-                  <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.6 }}>{aiInsight}</div>
-                </div>
-              ) : null}
-
-              {/* Key factors */}
-              {result.key_factors?.length > 0 && (
-                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 10 }}>Key Factors</div>
-                  {result.key_factors.map((f, i) => (
-                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>
-                      <span style={{ color: C.muted }}>{f.factor}</span>
-                      <span style={{ color: f.impact === 'positive' ? C.green : C.red, fontWeight: 700, textTransform: 'capitalize' }}>{f.impact}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
+          {result ? <PredictionResults r={result} sym={sym} /> : (
             <div style={{
               background: C.surface, border: `1px solid ${C.border}`,
-              borderRadius: 16, padding: 40, textAlign: 'center', height: '100%',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
+              borderRadius: 16, padding: 40, textAlign: 'center',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
             }}>
-              <div style={{ fontSize: 48 }}>🔮</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: C.muted }}>Enter property details</div>
-              <div style={{ fontSize: 13, color: C.dim }}>to get an AI-powered price estimate</div>
+              <div style={{ fontSize: 52 }}>◇</div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: C.muted, fontFamily: T.display }}>AI Valuation Ready</div>
+              <div style={{ fontSize: 13, color: C.dim, maxWidth: 220, lineHeight: 1.5 }}>Fill in the property details and click Generate Valuation</div>
             </div>
           )}
         </div>
@@ -238,12 +212,93 @@ export default function Predict() {
   );
 }
 
+function PredictionResults({ r, sym }) {
+  const ratingColor = { 'Excellent': C.green, 'Good': C.blue, 'Moderate': C.amber, 'Below Average': C.red }[r.investment_rating] || C.muted;
+  const sentColor   = { 'Rising': C.green, 'Stable': C.blue, 'Cooling': C.amber }[r.market_sentiment] || C.muted;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Main price */}
+      <div style={{
+        background: 'linear-gradient(135deg,rgba(79,158,255,0.1),rgba(129,140,248,0.1))',
+        border: '1px solid rgba(79,158,255,0.25)', borderRadius: 16, padding: '22px', textAlign: 'center',
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.blue, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>AI Estimated Value</div>
+        <div style={{ fontFamily: T.display, fontSize: 44, fontWeight: 900, color: C.text, letterSpacing: '-2px', lineHeight: 1 }}>
+          {sym}{r.estimated_price?.toLocaleString()}
+        </div>
+        <div style={{ fontSize: 13, color: C.muted, marginTop: 7 }}>
+          Range: {sym}{r.price_range_low?.toLocaleString()} – {sym}{r.price_range_high?.toLocaleString()}
+        </div>
+        <div style={{ fontSize: 11, color: C.dim, marginTop: 3 }}>Confidence: {r.confidence_pct}%</div>
+      </div>
+
+      {/* Metrics grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        {[
+          { icon: '📈', label: 'Rental Yield', value: `${r.gross_rental_yield}%`, color: C.teal },
+          { icon: '🏠', label: 'Monthly Rent', value: `${sym}${r.estimated_monthly_rent?.toLocaleString()}`, color: C.text },
+          { icon: '📊', label: 'Annual Growth', value: `+${r.annual_growth_pct}%`, color: C.green },
+          { icon: '⚖️', label: 'Investment', value: r.investment_rating, color: ratingColor },
+          { icon: '📉', label: 'Market', value: r.market_sentiment, color: sentColor },
+          { icon: '💷', label: 'Stamp Duty', value: `${sym}${r.stamp_duty?.toLocaleString()}`, color: C.amber },
+        ].map(m => (
+          <div key={m.label} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '13px 15px' }}>
+            <div style={{ fontSize: 17, marginBottom: 5 }}>{m.icon}</div>
+            <div style={{ fontFamily: T.display, fontSize: 16, fontWeight: 900, color: m.color }}>{m.value}</div>
+            <div style={{ fontSize: 10, color: C.dim, marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{m.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* AI Analysis */}
+      {r.ai_analysis && (
+        <div style={{ background: 'linear-gradient(135deg,rgba(79,158,255,0.07),rgba(129,140,248,0.07))', border: '1px solid rgba(79,158,255,0.18)', borderRadius: 12, padding: 15 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: C.blue, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>🤖 AI Analysis</div>
+          <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.65 }}>{r.ai_analysis}</div>
+        </div>
+      )}
+
+      {/* Drivers & Risks */}
+      {(r.key_value_drivers?.length > 0 || r.risk_factors?.length > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {r.key_value_drivers?.length > 0 && (
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.green, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 9 }}>✓ Value Drivers</div>
+              {r.key_value_drivers.map((d, i) => <div key={i} style={{ fontSize: 12, color: C.muted, marginBottom: 5 }}>• {d}</div>)}
+            </div>
+          )}
+          {r.risk_factors?.length > 0 && (
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.amber, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 9 }}>⚠ Risk Factors</div>
+              {r.risk_factors.map((r, i) => <div key={i} style={{ fontSize: 12, color: C.muted, marginBottom: 5 }}>• {r}</div>)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Comparables */}
+      {r.comparable_sales?.length > 0 && (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 10 }}>Comparable Sales</div>
+          {r.comparable_sales.map((c, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i < r.comparable_sales.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+              <span style={{ fontSize: 12, color: C.muted }}>{c.description}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{sym}{c.price?.toLocaleString()}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AuthGate() {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - 60px)', gap: 16 }}>
-      <div style={{ fontSize: 52 }}>💰</div>
-      <h2 style={{ fontFamily: T.display, fontSize: 22, fontWeight: 900, color: C.text, margin: 0 }}>Sign in to use Price AI</h2>
-      <p style={{ color: C.muted, fontSize: 14, margin: 0 }}>Get AI-powered property valuations for the UK market</p>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - 58px)', gap: 14 }}>
+      <div style={{ fontSize: 52 }}>◇</div>
+      <h2 style={{ fontFamily: T.display, fontSize: 22, fontWeight: 900, color: C.text, margin: 0 }}>Sign in for Price AI</h2>
+      <p style={{ color: C.muted, fontSize: 14, margin: 0 }}>AI-powered valuations for any property globally</p>
     </div>
   );
 }

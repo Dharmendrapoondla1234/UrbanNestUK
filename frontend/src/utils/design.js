@@ -1,77 +1,72 @@
-// ── Design tokens ────────────────────────────────────────────
 export const C = {
-  bg:      '#0a0b0f',
-  surface: '#12141a',
-  card:    '#181b24',
-  border:  'rgba(255,255,255,0.07)',
-  text:    '#f0f2f8',
-  muted:   '#8892a4',
-  dim:     '#4a5568',
-  blue:    '#3b8cf8',
-  purple:  '#8b5cf6',
-  green:   '#22c55e',
-  red:     '#ef4444',
-  amber:   '#f59e0b',
-  teal:    '#14b8a6',
+  bg:       '#070910',
+  surface:  '#0f111a',
+  card:     '#141720',
+  border:   'rgba(255,255,255,0.07)',
+  borderHi: 'rgba(99,179,237,0.35)',
+  text:     '#eef2ff',
+  muted:    '#7b8ab8',
+  dim:      '#3d4566',
+  blue:     '#4f9eff',
+  indigo:   '#818cf8',
+  purple:   '#a78bfa',
+  green:    '#34d399',
+  red:      '#f87171',
+  amber:    '#fbbf24',
+  teal:     '#2dd4bf',
+  cyan:     '#22d3ee',
 };
 
 export const T = {
-  display: "'Inter', 'Segoe UI', system-ui, sans-serif",
-  body:    "'Inter', 'Segoe UI', system-ui, sans-serif",
-  mono:    "'JetBrains Mono', 'Fira Code', monospace",
+  display: "'Syne', 'Space Grotesk', system-ui, sans-serif",
+  body:    "'DM Sans', 'Outfit', system-ui, sans-serif",
+  mono:    "'JetBrains Mono', monospace",
 };
 
-export function fmt(n) {
+export function fmt(n, symbol = '£') {
   if (!n && n !== 0) return '—';
-  if (n >= 1_000_000) return `£${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000)     return `£${(n / 1_000).toFixed(0)}K`;
-  return `£${n.toLocaleString()}`;
+  if (n >= 1_000_000) return `${symbol}${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000)     return `${symbol}${(n / 1_000).toFixed(0)}K`;
+  return `${symbol}${n.toLocaleString()}`;
 }
 
-export function fmtK(n) {
-  if (!n && n !== 0) return '—';
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-export function badge(label, color = C.blue, bg) {
+export function badge(color = '#4f9eff') {
   return {
-    display: 'inline-flex',
-    alignItems: 'center',
-    padding: '2px 8px',
-    borderRadius: 99,
-    fontSize: 11,
-    fontWeight: 700,
-    color,
-    background: bg || color + '22',
-    letterSpacing: '0.3px',
+    display: 'inline-flex', alignItems: 'center',
+    padding: '2px 9px', borderRadius: 99,
+    fontSize: 10, fontWeight: 700, color,
+    background: color + '1a', border: `1px solid ${color}33`,
+    letterSpacing: '0.3px', fontFamily: "'DM Sans', sans-serif",
   };
 }
 
 export function btn(variant = 'primary', size = 'md') {
-  const sizes = {
-    sm: { padding: '7px 14px', fontSize: 12 },
-    md: { padding: '10px 20px', fontSize: 13 },
-    lg: { padding: '13px 28px', fontSize: 15 },
-  };
-  const variants = {
-    primary: { background: C.blue, color: '#fff', border: 'none' },
-    secondary: { background: 'transparent', color: C.blue, border: `1px solid ${C.blue}` },
-    ghost: { background: 'transparent', color: C.muted, border: `1px solid ${C.border}` },
-    danger: { background: C.red, color: '#fff', border: 'none' },
+  const pad = { sm: '7px 14px', md: '10px 20px', lg: '13px 28px' }[size];
+  const fs  = { sm: 11, md: 13, lg: 15 }[size];
+  const vars = {
+    primary:   { background: 'linear-gradient(135deg,#4f9eff,#818cf8)', color: '#fff', border: 'none' },
+    secondary: { background: 'transparent', color: '#4f9eff', border: '1px solid rgba(79,158,255,0.4)' },
+    ghost:     { background: 'rgba(255,255,255,0.04)', color: '#7b8ab8', border: '1px solid rgba(255,255,255,0.07)' },
+    danger:    { background: '#f87171', color: '#fff', border: 'none' },
+    teal:      { background: 'linear-gradient(135deg,#2dd4bf,#22d3ee)', color: '#070910', border: 'none' },
   };
   return {
-    ...sizes[size],
-    ...variants[variant],
-    borderRadius: 9,
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: T.body,
-    letterSpacing: '0.2px',
-    transition: 'all 0.15s',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
+    padding: pad, fontSize: fs,
+    ...vars[variant],
+    borderRadius: 10, fontWeight: 700, cursor: 'pointer',
+    fontFamily: "'DM Sans', sans-serif", letterSpacing: '0.2px',
+    transition: 'all 0.18s', display: 'inline-flex', alignItems: 'center', gap: 6, lineHeight: 1,
+  };
+}
+
+export function inputStyle(focused = false) {
+  return {
+    width: '100%', padding: '11px 14px',
+    background: 'rgba(255,255,255,0.04)',
+    border: `1px solid ${focused ? 'rgba(79,158,255,0.6)' : 'rgba(255,255,255,0.07)'}`,
+    borderRadius: 10, color: '#eef2ff',
+    fontSize: 14, fontFamily: "'DM Sans', sans-serif",
+    outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
   };
 }
 
@@ -81,24 +76,14 @@ export const PROPERTY_TYPES = [
 ];
 
 export const PROPERTY_ICONS = {
-  'Flat': '🏢',
-  'Terraced House': '🏘️',
-  'Semi-Detached': '🏠',
-  'Detached House': '🏡',
-  'Bungalow': '🏠',
-  'Maisonette': '🏙️',
-  'Studio': '🏬',
-  'Penthouse': '🌆',
-  'Commercial': '🏢',
-  'Land': '🌿',
+  'Flat':'🏢','Terraced House':'🏘️','Semi-Detached':'🏠','Detached House':'🏡',
+  'Bungalow':'🏠','Maisonette':'🏙️','Studio':'🏬','Penthouse':'🌆','Commercial':'🏪','Land':'🌿',
 };
 
-export const UK_CITIES = ['London','Manchester','Birmingham','Leeds','Edinburgh','Bristol','Liverpool','Oxford'];
-
 export const SORT_OPTIONS = [
-  { value: 'featured', label: 'Featured' },
-  { value: 'price_asc', label: 'Price: Low → High' },
-  { value: 'price_desc', label: 'Price: High → Low' },
-  { value: 'rating', label: 'Top Rated' },
-  { value: 'area', label: 'Largest First' },
+  { value: 'featured', label: '⭐ Featured' },
+  { value: 'price_asc', label: '↑ Lowest Price' },
+  { value: 'price_desc', label: '↓ Highest Price' },
+  { value: 'rating', label: '★ Top Rated' },
+  { value: 'area', label: '📐 Largest' },
 ];

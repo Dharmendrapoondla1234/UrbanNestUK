@@ -1,220 +1,159 @@
 import { useState, useEffect } from 'react';
-import { C, T, fmt, btn, PROPERTY_TYPES, PROPERTY_ICONS, UK_CITIES } from '../utils/design.js';
+import { C, T, fmt, btn, PROPERTY_TYPES, PROPERTY_ICONS } from '../utils/design.js';
 import { getFeatured } from '../services/api.js';
+import { useGlobal } from '../hooks/useGlobal.jsx';
 import PropertyCard from '../components/property/PropertyCard.jsx';
 import PropertyDetail from '../components/property/PropertyDetail.jsx';
+import SearchPanel from '../components/search/SearchPanel.jsx';
 
 const STATS = [
-  { value: '120,000+', label: 'Properties Listed' },
-  { value: '50+', label: 'UK Cities Covered' },
-  { value: '97%', label: 'Customer Satisfaction' },
-  { value: '£8.2B+', label: 'Transactions' },
+  { value: '2M+', label: 'Global Listings', icon: '🏘️' },
+  { value: '50+', label: 'Countries', icon: '🌍' },
+  { value: '97%', label: 'Match Accuracy', icon: '🎯' },
+  { value: '£48B+', label: 'Transactions', icon: '💷' },
 ];
 
 export default function Home({ setPage, setSearchParams }) {
+  const { country, city } = useGlobal();
   const [featured, setFeatured] = useState([]);
   const [selected, setSelected] = useState(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchCity, setSearchCity] = useState('London');
-  const [searchType, setSearchType] = useState('');
 
   useEffect(() => {
     getFeatured(6).then(d => setFeatured(d.items || [])).catch(() => {});
   }, []);
 
-  function handleSearch() {
-    setSearchParams({ query: searchQuery, city: searchCity, type: searchType });
+  function handleSearch(params) {
+    setSearchParams(params);
     setPage('search');
   }
-
-  function handleTypeClick(type) {
-    setSearchParams({ type });
-    setPage('search');
-  }
-
-  function handleCityClick(city) {
-    setSearchParams({ city });
-    setPage('search');
-  }
-
-  const inputStyle = {
-    background: 'rgba(255,255,255,0.06)',
-    border: `1px solid ${C.border}`,
-    borderRadius: 8, color: C.text,
-    fontSize: 14, fontFamily: T.body,
-    outline: 'none', padding: '10px 14px',
-  };
 
   return (
     <div style={{ minHeight: '100vh' }}>
       {/* Hero */}
       <div style={{
-        position: 'relative', padding: '80px 24px 60px',
-        background: 'radial-gradient(ellipse 80% 60% at 50% -10%, rgba(59,140,248,0.15) 0%, transparent 70%)',
-        textAlign: 'center',
+        position: 'relative', padding: '70px 24px 56px', textAlign: 'center',
+        background: 'radial-gradient(ellipse 80% 55% at 50% -5%, rgba(79,158,255,0.12) 0%, transparent 65%)',
+        overflow: 'hidden',
       }}>
+        {/* Decorative grid */}
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none',
+          backgroundImage: 'linear-gradient(rgba(79,158,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(79,158,255,0.04) 1px, transparent 1px)',
+          backgroundSize: '48px 48px',
+          maskImage: 'radial-gradient(ellipse at center, black 20%, transparent 80%)',
+        }} />
+
         <div style={{
           display: 'inline-flex', alignItems: 'center', gap: 6,
-          padding: '5px 14px', borderRadius: 99,
-          background: 'rgba(59,140,248,0.1)', border: '1px solid rgba(59,140,248,0.2)',
-          fontSize: 12, color: C.blue, fontWeight: 700, marginBottom: 20,
-          letterSpacing: '0.3px',
+          padding: '5px 14px', borderRadius: 99, marginBottom: 22,
+          background: 'rgba(79,158,255,0.1)', border: '1px solid rgba(79,158,255,0.2)',
+          fontSize: 11, color: C.blue, fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase',
         }}>
-          ✦ AI-Powered UK Property Platform
+          ✦ AI-Powered Global Property Intelligence
         </div>
 
         <h1 style={{
-          fontFamily: T.display, fontSize: 'clamp(36px, 7vw, 72px)',
-          fontWeight: 900, color: C.text, margin: '0 0 12px',
-          lineHeight: 1.1, letterSpacing: '-2px',
+          fontFamily: T.display, fontSize: 'clamp(34px,6.5vw,70px)',
+          fontWeight: 900, color: C.text, margin: '0 0 14px',
+          lineHeight: 1.08, letterSpacing: '-2.5px',
         }}>
           Find Your Perfect<br />
-          <span style={{ background: 'linear-gradient(90deg,#3b8cf8,#8b5cf6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+          <span style={{ background: 'linear-gradient(90deg,#4f9eff,#818cf8,#a78bfa)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
             Dream Property
           </span>
         </h1>
 
-        <p style={{ color: C.muted, fontSize: 17, maxWidth: 520, margin: '0 auto 40px', lineHeight: 1.6 }}>
-          AI-driven search, price prediction, and market insights across apartments, villas, penthouses, plots, and commercial spaces.
+        <p style={{ color: C.muted, fontSize: 16, maxWidth: 480, margin: '0 auto 36px', lineHeight: 1.65 }}>
+          Agentic AI that understands your intent, searches globally, and delivers only verified, highly relevant properties.
         </p>
 
-        {/* Search bar */}
-        <div style={{
-          background: C.surface, border: `1px solid ${C.border}`,
-          borderRadius: 16, padding: 20, maxWidth: 700, margin: '0 auto',
-          display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center',
-        }}>
-          <input
-            style={{ ...inputStyle, flex: 1, minWidth: 180 }}
-            placeholder="🔍 Search area, project, or address…"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSearch()}
-          />
-          <select style={{ ...inputStyle }} value={searchCity} onChange={e => setSearchCity(e.target.value)}>
-            {UK_CITIES.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select style={{ ...inputStyle }} value={searchType} onChange={e => setSearchType(e.target.value)}>
-            <option value="">All Types</option>
-            {PROPERTY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <button onClick={handleSearch} style={{
-            ...btn('primary', 'md'),
-            background: 'linear-gradient(135deg,#3b8cf8,#8b5cf6)',
-            padding: '10px 24px', fontWeight: 800,
-          }}>
-            Search
-          </button>
+        {/* Search */}
+        <div style={{ maxWidth: 740, margin: '0 auto' }}>
+          <SearchPanel onSearch={handleSearch} compact={true} />
         </div>
       </div>
 
       {/* Stats */}
-      <div style={{ display: 'flex', justifyContent: 'center', gap: 48, padding: '24px 24px', flexWrap: 'wrap', borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 40, padding: '24px 24px', flexWrap: 'wrap', borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}` }}>
         {STATS.map(s => (
           <div key={s.label} style={{ textAlign: 'center' }}>
-            <div style={{ fontFamily: T.display, fontSize: 26, fontWeight: 900, color: C.text, letterSpacing: '-1px' }}>{s.value}</div>
-            <div style={{ fontSize: 12, color: C.muted, marginTop: 3 }}>{s.label}</div>
+            <div style={{ fontSize: 22, marginBottom: 4 }}>{s.icon}</div>
+            <div style={{ fontFamily: T.display, fontSize: 24, fontWeight: 900, color: C.text, letterSpacing: '-1px' }}>{s.value}</div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 2, fontWeight: 600 }}>{s.label}</div>
           </div>
         ))}
       </div>
 
-      {/* Property types grid */}
-      <div style={{ padding: '48px 24px', maxWidth: 1100, margin: '0 auto' }}>
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <h2 style={{ fontFamily: T.display, fontSize: 32, fontWeight: 900, color: C.text, margin: '0 0 8px', letterSpacing: '-1px' }}>All Property Types</h2>
-          <p style={{ color: C.muted, fontSize: 14, margin: 0 }}>Complete coverage of UK residential &amp; commercial property</p>
+      {/* Property Types */}
+      <div style={{ padding: '52px 24px', maxWidth: 1080, margin: '0 auto' }}>
+        <div style={{ textAlign: 'center', marginBottom: 30 }}>
+          <h2 style={{ fontFamily: T.display, fontSize: 30, fontWeight: 900, color: C.text, margin: '0 0 7px', letterSpacing: '-1px' }}>All Property Types</h2>
+          <p style={{ color: C.muted, fontSize: 13, margin: 0 }}>Search across residential, commercial & land worldwide</p>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
           {PROPERTY_TYPES.map(type => (
-            <button key={type} onClick={() => handleTypeClick(type)} style={{
+            <button key={type} onClick={() => { setSearchParams({ type }); setPage('search'); }} style={{
               background: C.surface, border: `1px solid ${C.border}`,
-              borderRadius: 12, padding: '18px 12px', cursor: 'pointer',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
+              borderRadius: 12, padding: '16px 10px', cursor: 'pointer',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9,
               transition: 'all 0.2s', fontFamily: T.body,
             }}
-              onMouseEnter={e => { e.currentTarget.style.border = `1px solid rgba(59,140,248,0.4)`; e.currentTarget.style.background = 'rgba(59,140,248,0.05)'; }}
-              onMouseLeave={e => { e.currentTarget.style.border = `1px solid ${C.border}`; e.currentTarget.style.background = C.surface; }}
+              onMouseEnter={e => { e.currentTarget.style.border = '1px solid rgba(79,158,255,0.4)'; e.currentTarget.style.background = 'rgba(79,158,255,0.05)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+              onMouseLeave={e => { e.currentTarget.style.border = `1px solid ${C.border}`; e.currentTarget.style.background = C.surface; e.currentTarget.style.transform = 'none'; }}
             >
-              <span style={{ fontSize: 30 }}>{PROPERTY_ICONS[type] || '🏠'}</span>
-              <span style={{ fontSize: 12, fontWeight: 600, color: C.muted, textAlign: 'center' }}>{type}</span>
+              <span style={{ fontSize: 28 }}>{PROPERTY_ICONS[type]}</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: C.muted }}>{type}</span>
             </button>
           ))}
         </div>
       </div>
 
-      {/* Featured properties */}
+      {/* Featured */}
       {featured.length > 0 && (
-        <div style={{ padding: '0 24px 60px', maxWidth: 1100, margin: '0 auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div style={{ padding: '0 24px 60px', maxWidth: 1080, margin: '0 auto' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
             <div>
-              <h2 style={{ fontFamily: T.display, fontSize: 28, fontWeight: 900, color: C.text, margin: '0 0 6px', letterSpacing: '-0.5px' }}>Featured Properties</h2>
-              <p style={{ color: C.muted, fontSize: 13, margin: 0 }}>Handpicked listings across the UK</p>
+              <h2 style={{ fontFamily: T.display, fontSize: 26, fontWeight: 900, color: C.text, margin: '0 0 5px', letterSpacing: '-0.5px' }}>Featured in {city}</h2>
+              <p style={{ color: C.muted, fontSize: 12, margin: 0 }}>AI-curated top listings</p>
             </div>
-            <button onClick={() => setPage('search')} style={{ ...btn('secondary', 'sm') }}>
-              View All →
-            </button>
+            <button onClick={() => setPage('search')} style={{ ...btn('secondary', 'sm') }}>View All →</button>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 20 }}>
-            {featured.map(p => (
-              <PropertyCard key={p.id} property={p} onClick={setSelected} />
-            ))}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))', gap: 18 }}>
+            {featured.map(p => <PropertyCard key={p.id} property={p} onClick={setSelected} country={country} />)}
           </div>
         </div>
       )}
 
-      {/* Cities */}
-      <div style={{ padding: '0 24px 60px', maxWidth: 1100, margin: '0 auto' }}>
-        <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <h2 style={{ fontFamily: T.display, fontSize: 28, fontWeight: 900, color: C.text, margin: '0 0 6px', letterSpacing: '-0.5px' }}>Explore by City</h2>
-          <p style={{ color: C.muted, fontSize: 13, margin: 0 }}>Find properties in top UK cities</p>
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
-          {UK_CITIES.map(city => (
-            <button key={city} onClick={() => handleCityClick(city)} style={{
-              ...btn('ghost', 'md'), fontSize: 14, fontWeight: 600,
-            }}>
-              🏙️ {city}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* AI Features banner */}
       <div style={{
-        margin: '0 24px 60px',
-        background: 'linear-gradient(135deg,rgba(59,140,248,0.1),rgba(139,92,246,0.1))',
-        border: '1px solid rgba(59,140,248,0.2)',
-        borderRadius: 20, padding: '40px 32px',
-        display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'center', justifyContent: 'space-between',
-        maxWidth: 1052, marginLeft: 'auto', marginRight: 'auto',
+        margin: '0 24px 60px', maxWidth: 1032, marginLeft: 'auto', marginRight: 'auto',
+        background: 'linear-gradient(135deg,rgba(79,158,255,0.08),rgba(129,140,248,0.08))',
+        border: '1px solid rgba(79,158,255,0.18)', borderRadius: 20, padding: '36px 32px',
+        display: 'grid', gridTemplateColumns: '1fr auto', gap: 24, alignItems: 'center',
       }}>
         <div>
-          <h3 style={{ fontFamily: T.display, fontSize: 24, fontWeight: 900, color: C.text, margin: '0 0 8px', letterSpacing: '-0.5px' }}>
-            Powered by Agentic AI
+          <h3 style={{ fontFamily: T.display, fontSize: 22, fontWeight: 900, color: C.text, margin: '0 0 8px', letterSpacing: '-0.5px' }}>
+            Fully Agentic AI Architecture
           </h3>
-          <p style={{ color: C.muted, fontSize: 14, margin: 0, maxWidth: 420, lineHeight: 1.6 }}>
-            Get personalised recommendations, accurate price predictions, and deep market insights — all powered by LLMs and real-time data.
+          <p style={{ color: C.muted, fontSize: 13, margin: 0, maxWidth: 460, lineHeight: 1.65 }}>
+            Multiple specialized AI agents work in parallel — parsing intent, fetching data, validating results, predicting prices, and generating market intelligence — all in real time.
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-          {[
-            { icon: '🤖', label: 'AI Advisor' },
-            { icon: '💰', label: 'Price AI' },
-            { icon: '📊', label: 'Market Analysis' },
-          ].map(f => (
-            <div key={f.label} style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: '10px 16px', borderRadius: 10,
-              background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`,
-              fontSize: 13, color: C.text, fontWeight: 600,
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {[['🤖','AI Advisor'],['💰','Price AI'],['📊','Market Intel'],['🗺️','Smart Map']].map(([icon, label]) => (
+            <div key={label} style={{
+              display: 'flex', alignItems: 'center', gap: 7,
+              padding: '9px 14px', borderRadius: 10,
+              background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.border}`,
+              fontSize: 12, color: C.text, fontWeight: 600, whiteSpace: 'nowrap',
             }}>
-              <span style={{ fontSize: 18 }}>{f.icon}</span> {f.label}
+              <span style={{ fontSize: 16 }}>{icon}</span>{label}
             </div>
           ))}
         </div>
       </div>
 
-      {selected && <PropertyDetail property={selected} onClose={() => setSelected(null)} />}
+      {selected && <PropertyDetail property={selected} onClose={() => setSelected(null)} country={country} />}
     </div>
   );
 }
