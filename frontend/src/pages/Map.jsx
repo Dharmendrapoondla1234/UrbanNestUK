@@ -1,198 +1,260 @@
+/**
+ * UrbanNest AI — Map Page
+ * Real Leaflet.js map (CARTO dark tiles, no API key needed).
+ * Drop a pin → AI analyses the location → shows nearby properties.
+ * Works for both India and UK.
+ */
 import { useState, useEffect, useRef } from 'react';
-import { C, T, fmt, btn } from '../utils/design.js';
-import { searchProperties, getCurrency } from '../services/api.js';
-import { getMapAreaSuggestions, generateAreasForCity } from '../services/gemini.js';
+import { searchFilter } from '../services/api.js';
+import { getMapAreaInfo, generateAreasForCity } from '../services/gemini.js';
 import { useGlobal } from '../hooks/useGlobal.jsx';
-import PropertyDetail from '../components/property/PropertyDetail.jsx';
 
 const CITY_CENTERS = {
-  London:     { lat: 51.5074, lng: -0.1278 },
-  Manchester: { lat: 53.4808, lng: -2.2426 },
-  Birmingham: { lat: 52.4862, lng: -1.8904 },
-  Leeds:      { lat: 53.8008, lng: -1.5491 },
-  Edinburgh:  { lat: 55.9533, lng: -3.1883 },
-  Bristol:    { lat: 51.4545, lng: -2.5879 },
-  Liverpool:  { lat: 53.4084, lng: -2.9916 },
-  Oxford:     { lat: 51.7520, lng: -1.2577 },
-  // Fallback
-  default:    { lat: 51.5074, lng: -0.1278 },
+  // UK
+  London:     { lat: 51.5074, lng: -0.1278, zoom: 12 },
+  Manchester: { lat: 53.4808, lng: -2.2426, zoom: 12 },
+  Birmingham: { lat: 52.4862, lng: -1.8904, zoom: 12 },
+  Leeds:      { lat: 53.8008, lng: -1.5491, zoom: 12 },
+  Edinburgh:  { lat: 55.9533, lng: -3.1883, zoom: 12 },
+  Bristol:    { lat: 51.4545, lng: -2.5879, zoom: 12 },
+  Liverpool:  { lat: 53.4084, lng: -2.9916, zoom: 12 },
+  Oxford:     { lat: 51.7520, lng: -1.2577, zoom: 13 },
+  // India
+  Mumbai:     { lat: 19.0760, lng: 72.8777, zoom: 12 },
+  Delhi:      { lat: 28.7041, lng: 77.1025, zoom: 11 },
+  Bangalore:  { lat: 12.9716, lng: 77.5946, zoom: 12 },
+  Hyderabad:  { lat: 17.3850, lng: 78.4867, zoom: 12 },
+  Chennai:    { lat: 13.0827, lng: 80.2707, zoom: 12 },
+  Pune:       { lat: 18.5204, lng: 73.8567, zoom: 12 },
+  Gurgaon:    { lat: 28.4595, lng: 77.0266, zoom: 12 },
 };
 
 export default function MapPage() {
-  const { country, city: globalCity, cities } = useGlobal();
-  const { symbol } = getCurrency(country);
-  // FIX: initialize from globalCity and sync when it changes
-  const [city, setCity]           = useState(globalCity || 'London');
+  const { country, city: globalCity, cities, symbol } = useGlobal();
+  const [city, setCity]               = useState(globalCity || 'London');
+  const [properties, setProperties]   = useState([]);
+  const [selected, setSelected]       = useState(null);
+  const [pin, setPin]                 = useState(null);
+  const [pinInfo, setPinInfo]         = useState(null);
+  const [pinLoading, setPinLoading]   = useState(false);
+  const [nearbyProps, setNearbyProps] = useState([]);
+  const [intent, setIntent]           = useState('');
+  const [areaRecs, setAreaRecs]       = useState([]);
+  const [loading, setLoading]         = useState(false);
+  const mapRef        = useRef(null);
+  const leafletRef    = useRef(null);
+  const markersRef    = useRef([]);
+  const pinMarkerRef  = useRef(null);
 
-  // Sync Map city when global city changes from Navbar
+  // Sync city from navbar
   useEffect(() => {
     if (globalCity && globalCity !== city) setCity(globalCity);
-  }, [globalCity]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [properties, setProperties] = useState([]);
-  const [selected, setSelected]   = useState(null);
-  const [hovered, setHovered]     = useState(null);
-  const [pin, setPin]             = useState(null); // { lat, lng }
-  const [pinInfo, setPinInfo]     = useState(null);
-  const [pinLoading, setPinLoading] = useState(false);
-  const [pinProperties, setPinProperties] = useState([]);
-  const [userIntent, setUserIntent] = useState('');
-  const [areaRecs, setAreaRecs]   = useState([]);
-  const [areaLoading, setAreaLoading] = useState(false);
-  const [loading, setLoading]     = useState(false);
-  const [viewMode, setViewMode]   = useState('all'); // all | pin
-  const svgRef = useRef(null);
+  }, [globalCity]); // eslint-disable-line
 
-  const center = CITY_CENTERS[city] || CITY_CENTERS.default;
-  const W = 800, H = 520;
-  const SCALE = 2200;
+  // ── Init Leaflet map ────────────────────────────────────────────
+  useEffect(() => {
+    if (leafletRef.current || !mapRef.current) return;
 
-  function toXY(lat, lng) {
-    const x = (lng - center.lng) * SCALE + W / 2;
-    const y = (center.lat - lat) * SCALE + H / 2;
-    return { x, y };
-  }
-  function fromXY(x, y) {
-    const lat = center.lat - (y - H / 2) / SCALE;
-    const lng = center.lng + (x - W / 2) / SCALE;
-    return { lat, lng };
-  }
+    // Inject Leaflet CSS
+    if (!document.getElementById('leaflet-css')) {
+      const link = document.createElement('link');
+      link.id = 'leaflet-css';
+      link.rel = 'stylesheet';
+      link.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
+      document.head.appendChild(link);
+    }
+
+    const initMap = (L) => {
+      const center = CITY_CENTERS[city] || { lat: 51.5074, lng: -0.1278, zoom: 11 };
+      const map = L.map(mapRef.current, {
+        center: [center.lat, center.lng],
+        zoom: center.zoom,
+        zoomControl: true,
+      });
+
+      // Dark CARTO tiles — no API key required
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap © CARTO',
+        maxZoom: 19,
+      }).addTo(map);
+
+      map.on('click', e => handleMapClick(e.latlng.lat, e.latlng.lng, L, map));
+      leafletRef.current = { map, L };
+    };
+
+    if (window.L) {
+      initMap(window.L);
+    } else {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
+      script.onload = () => initMap(window.L);
+      document.head.appendChild(script);
+    }
+
+    return () => {
+      if (leafletRef.current?.map) {
+        leafletRef.current.map.remove();
+        leafletRef.current = null;
+      }
+    };
+  }, []); // eslint-disable-line
+
+  // Re-centre when city changes
+  useEffect(() => {
+    if (!leafletRef.current) return;
+    const center = CITY_CENTERS[city];
+    if (center) leafletRef.current.map.setView([center.lat, center.lng], center.zoom);
+  }, [city]);
 
   // Load city properties
   useEffect(() => {
     setLoading(true);
-    setPin(null);
-    setPinInfo(null);
-    setPinProperties([]);
-    setViewMode('all');
-    searchProperties({ city, limit: 60 })
+    setPin(null); setPinInfo(null); setNearbyProps([]);
+    searchFilter({ country, city, limit: 80 })
       .then(d => setProperties(d.items || []))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [city]);
+  }, [city, country]);
 
-  // Get AI area recommendations
+  // Place property markers on map
   useEffect(() => {
-    if (!userIntent) return;
-    const timer = setTimeout(async () => {
-      setAreaLoading(true);
+    if (!leafletRef.current) return;
+    const { map, L } = leafletRef.current;
+    markersRef.current.forEach(m => m.remove());
+    markersRef.current = [];
+
+    properties.forEach(p => {
+      if (!p.lat || !p.lng) return;
+      const color = p.featured ? '#FBBF24' : '#4F9EFF';
+      const size  = p.featured ? 14 : 10;
+
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="width:${size}px;height:${size}px;background:${color};border-radius:50%;
+          border:2px solid rgba(255,255,255,0.8);box-shadow:0 0 6px ${color}99;"></div>`,
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+      });
+
+      const marker = L.marker([p.lat, p.lng], { icon })
+        .addTo(map)
+        .on('click', () => setSelected(p))
+        .bindPopup(`
+          <div style="font-family:system-ui;min-width:160px">
+            <b style="font-size:14px">${p.price_display}</b>
+            <div style="font-size:12px;color:#555;margin:3px 0">${p.title}</div>
+            <div style="font-size:11px;color:#888">📍 ${p.area}</div>
+          </div>
+        `);
+
+      markersRef.current.push(marker);
+    });
+  }, [properties]);
+
+  // Generate AI area suggestions when intent typed
+  useEffect(() => {
+    if (!intent || intent.length < 4) return;
+    const t = setTimeout(async () => {
       const areas = await generateAreasForCity(city, country);
       setAreaRecs(areas.slice(0, 6));
-      setAreaLoading(false);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [userIntent, city, country]);
+    }, 600);
+    return () => clearTimeout(t);
+  }, [intent, city, country]);
 
-  async function handleMapClick(e) {
-    if (!svgRef.current) return;
-    const rect = svgRef.current.getBoundingClientRect();
-    const rawX = (e.clientX - rect.left) * (W / rect.width);
-    const rawY = (e.clientY - rect.top) * (H / rect.height);
-    const { lat, lng } = fromXY(rawX, rawY);
+  async function handleMapClick(lat, lng, L, map) {
+    // Remove old pin
+    if (pinMarkerRef.current) { pinMarkerRef.current.remove(); pinMarkerRef.current = null; }
 
-    setPin({ lat, lng, x: rawX, y: rawY });
-    setViewMode('pin');
+    setPin({ lat, lng });
     setPinLoading(true);
     setPinInfo(null);
-    setPinProperties([]);
+    setNearbyProps([]);
+
+    // Teal pin marker
+    const pinIcon = L.divIcon({
+      className: '',
+      html: `<div style="width:20px;height:20px;background:#2DD4BF;border-radius:50%;
+        border:3px solid white;box-shadow:0 0 12px #2DD4BF88;"></div>`,
+      iconSize: [20, 20],
+      iconAnchor: [10, 10],
+    });
+    pinMarkerRef.current = L.marker([lat, lng], { icon: pinIcon }).addTo(map);
+    map.panTo([lat, lng]);
 
     try {
-      // Parallel: AI info + nearby properties
       const [info, nearby] = await Promise.all([
-        getMapAreaSuggestions(lat, lng, userIntent),
-        searchProperties({ city, limit: 8 })
-          .then(d => {
-            // Filter by proximity (rough)
-            return (d.items || []).filter(p => {
-              if (!p.lat || !p.lng) return false;
-              const dist = Math.sqrt((p.lat - lat) ** 2 + (p.lng - lng) ** 2);
-              return dist < 0.05; // ~3-4km
-            }).slice(0, 6);
-          })
+        getMapAreaInfo(lat, lng, intent),
+        searchFilter({ country, city, limit: 12 }).then(d =>
+          (d.items || []).filter(p => {
+            if (!p.lat || !p.lng) return false;
+            return Math.sqrt((p.lat - lat) ** 2 + (p.lng - lng) ** 2) < 0.04;
+          }).slice(0, 6)
+        ),
       ]);
       setPinInfo(info);
-      setPinProperties(nearby); // empty = show 'no nearby properties' message, don't fake results
+      setNearbyProps(nearby);
     } finally {
       setPinLoading(false);
     }
   }
 
   function clearPin() {
-    setPin(null);
-    setPinInfo(null);
-    setPinProperties([]);
-    setViewMode('all');
+    setPin(null); setPinInfo(null); setNearbyProps([]);
+    if (pinMarkerRef.current) { pinMarkerRef.current.remove(); pinMarkerRef.current = null; }
   }
 
-  function openNavigate(p) {
-    const q = p.lat && p.lng ? `${p.lat},${p.lng}` : encodeURIComponent(p.address || p.title);
-    window.open(`https://www.google.com/maps/dir/?api=1&destination=${q}`, '_blank');
-  }
-  function openPinNavigate() {
-    if (!pin) return;
-    window.open(`https://www.google.com/maps/search/?api=1&query=${pin.lat},${pin.lng}`, '_blank');
-  }
-
-  const displayProps = viewMode === 'pin' ? pinProperties : properties;
+  const displayProps = pin ? nearbyProps : properties;
 
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh - 58px)', overflow: 'hidden', background: C.bg }}>
-      {/* Left sidebar */}
+    <div style={{ display: 'flex', height: 'calc(100vh - 58px)', overflow: 'hidden', background: '#0D1117' }}>
+      {/* ── Sidebar ── */}
       <div style={{
-        width: 340, flexShrink: 0, background: C.surface,
-        borderRight: `1px solid ${C.border}`,
-        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        width: 340, flexShrink: 0, background: '#111827',
+        borderRight: '1px solid #1F2937', display: 'flex', flexDirection: 'column', overflow: 'hidden',
       }}>
         {/* Controls */}
-        <div style={{ padding: '14px 14px 10px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <h2 style={{ fontFamily: T.display, fontSize: 16, fontWeight: 900, color: C.text, margin: 0 }}>◈ Map Search</h2>
+        <div style={{ padding: '14px 14px 10px', borderBottom: '1px solid #1F2937', flexShrink: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#F9FAFB' }}>◈ Map Search</h2>
             {pin && (
-              <button onClick={clearPin} style={{ ...btn('danger', 'sm'), fontSize: 11 }}>✕ Clear Pin</button>
+              <button onClick={clearPin} style={{
+                padding: '4px 10px', borderRadius: 6, background: 'rgba(239,68,68,0.15)',
+                border: '1px solid rgba(239,68,68,0.3)', color: '#F87171', fontSize: 11, cursor: 'pointer',
+              }}>✕ Clear Pin</button>
             )}
           </div>
 
-          <select
-            value={city}
-            onChange={e => setCity(e.target.value)}
-            style={{
-              width: '100%', padding: '8px 11px', marginBottom: 9,
-              background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.border}`,
-              borderRadius: 9, color: C.text, fontSize: 13, fontFamily: T.body, outline: 'none',
-            }}
-          >
+          <select value={city} onChange={e => setCity(e.target.value)} style={{
+            width: '100%', padding: '8px 10px', marginBottom: 8,
+            background: 'rgba(255,255,255,0.05)', border: '1px solid #374151',
+            borderRadius: 8, color: '#E5E7EB', fontSize: 13, outline: 'none',
+          }}>
             {cities.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
 
-          <input
-            placeholder="🤖 AI intent: 'family home near good schools'…"
-            value={userIntent}
-            onChange={e => setUserIntent(e.target.value)}
+          <input placeholder="🤖 Intent: 'near schools', 'IT park area'…"
+            value={intent} onChange={e => setIntent(e.target.value)}
             style={{
-              width: '100%', padding: '8px 11px', boxSizing: 'border-box',
-              background: 'rgba(79,158,255,0.06)', border: '1px solid rgba(79,158,255,0.2)',
-              borderRadius: 9, color: C.text, fontSize: 12, fontFamily: T.body, outline: 'none',
+              width: '100%', padding: '8px 10px', boxSizing: 'border-box',
+              background: 'rgba(79,158,255,0.07)', border: '1px solid rgba(79,158,255,0.25)',
+              borderRadius: 8, color: '#E5E7EB', fontSize: 12, outline: 'none',
             }}
           />
 
-          {areaLoading && <div style={{ fontSize: 11, color: C.dim, marginTop: 6 }}>🤖 AI suggesting areas…</div>}
           {areaRecs.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 7 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
               {areaRecs.map(a => (
-                <button key={a} onClick={() => setUserIntent(a)} style={{
-                  padding: '3px 9px', borderRadius: 99,
+                <button key={a} onClick={() => setIntent(a)} style={{
+                  padding: '3px 8px', borderRadius: 20, fontSize: 10,
                   background: 'rgba(79,158,255,0.1)', border: '1px solid rgba(79,158,255,0.2)',
-                  fontSize: 10, color: C.blue, cursor: 'pointer', fontFamily: T.body, fontWeight: 600,
-                }}>
-                  {a}
-                </button>
+                  color: '#4F9EFF', cursor: 'pointer',
+                }}>{a}</button>
               ))}
             </div>
           )}
 
-          <div style={{ fontSize: 11, color: C.dim, marginTop: 8 }}>
-            {pin
-              ? '📍 Pin placed — showing nearby properties'
-              : `${loading ? 'Loading…' : `${properties.length} properties`} · Click map to drop pin`}
+          <div style={{ fontSize: 11, color: '#6B7280', marginTop: 8 }}>
+            {pin ? '📍 Pin placed — showing nearby' : `${loading ? 'Loading…' : `${properties.length} properties`} · Click to drop pin`}
           </div>
         </div>
 
@@ -200,21 +262,20 @@ export default function MapPage() {
         {pin && (
           <div style={{
             margin: '10px 12px', padding: 12,
-            background: 'linear-gradient(135deg,rgba(45,212,191,0.1),rgba(34,211,238,0.08))',
-            border: '1px solid rgba(45,212,191,0.2)', borderRadius: 12, flexShrink: 0,
+            background: 'rgba(45,212,191,0.07)', border: '1px solid rgba(45,212,191,0.2)',
+            borderRadius: 10, flexShrink: 0,
           }}>
             {pinLoading ? (
-              <div style={{ fontSize: 12, color: C.muted }}>🤖 Analysing location…</div>
+              <div style={{ fontSize: 12, color: '#9CA3AF' }}>🤖 Analysing location…</div>
             ) : pinInfo ? (
               <>
-                <div style={{ fontSize: 13, fontWeight: 800, color: C.text, fontFamily: T.display }}>{pinInfo.area_name}</div>
-                <div style={{ fontSize: 11, color: C.muted, marginBottom: 7 }}>{pinInfo.city}</div>
-                {pinInfo.facts?.map((f, i) => (
-                  <div key={i} style={{ fontSize: 11, color: C.muted, marginBottom: 3 }}>• {f}</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: '#F9FAFB' }}>{pinInfo.area_name}</div>
+                <div style={{ fontSize: 11, color: '#9CA3AF', marginBottom: 6 }}>{pinInfo.city}</div>
+                {(pinInfo.facts || []).map((f, i) => (
+                  <div key={i} style={{ fontSize: 11, color: '#9CA3AF', marginBottom: 2 }}>• {f}</div>
                 ))}
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTop: `1px solid rgba(255,255,255,0.06)` }}>
-                  <span style={{ fontSize: 11, color: C.teal }}>Investment: {pinInfo.investment_score}/10</span>
-                  <button onClick={openPinNavigate} style={{ ...btn('teal', 'sm'), fontSize: 10, padding: '4px 10px' }}>🧭 Navigate</button>
+                <div style={{ marginTop: 8, fontSize: 11, color: '#2DD4BF' }}>
+                  Investment score: {pinInfo.investment_score}/10
                 </div>
               </>
             ) : null}
@@ -223,172 +284,153 @@ export default function MapPage() {
 
         {/* Property list */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '6px 12px 12px' }}>
-          {pinLoading && viewMode === 'pin' ? (
-            <div style={{ padding: '20px 0', textAlign: 'center', fontSize: 12, color: C.dim }}>Finding nearby properties…</div>
-          ) : displayProps.length === 0 ? (
-            <div style={{ padding: '20px 0', textAlign: 'center', fontSize: 12, color: C.dim }}>No properties in this area</div>
+          {displayProps.length === 0 ? (
+            <div style={{ padding: '20px 0', textAlign: 'center', fontSize: 12, color: '#6B7280' }}>
+              {loading ? 'Loading properties…' : pin ? 'No properties in this area' : 'No properties loaded'}
+            </div>
           ) : (
-            displayProps.map(p => {
-              const isHov = hovered?.id === p.id;
-              return (
-                <div
-                  key={p.id}
-                  onClick={() => setSelected(p)}
-                  onMouseEnter={() => setHovered(p)}
-                  onMouseLeave={() => setHovered(null)}
-                  style={{
-                    background: isHov ? 'rgba(79,158,255,0.08)' : C.card,
-                    border: `1px solid ${isHov ? 'rgba(79,158,255,0.35)' : C.border}`,
-                    borderRadius: 10, padding: 10, marginBottom: 8, cursor: 'pointer',
-                    transition: 'all 0.15s',
-                  }}
-                >
-                  <div style={{ display: 'flex', gap: 9 }}>
-                    <img
-                      src={p.images?.[0] || 'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?w=200&q=60'}
-                      alt=""
-                      style={{ width: 68, height: 52, borderRadius: 7, objectFit: 'cover', flexShrink: 0 }}
-                      onError={e => { e.target.src = 'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?w=200&q=60'; }}
-                    />
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: C.text, fontFamily: T.display }}>{fmt(p.price, symbol)}</div>
-                      <div style={{ fontSize: 11, color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{p.title}</div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                        <span style={{ fontSize: 10, color: C.dim }}>📍 {p.area}</span>
-                        <button onClick={e => { e.stopPropagation(); openNavigate(p); }} style={{
-                          fontSize: 9, padding: '2px 7px', borderRadius: 6,
-                          background: 'rgba(79,158,255,0.1)', border: '1px solid rgba(79,158,255,0.2)',
-                          color: C.blue, cursor: 'pointer', fontFamily: T.body, fontWeight: 700,
-                        }}>Navigate</button>
-                      </div>
-                    </div>
+            displayProps.map(p => (
+              <div key={p.id} onClick={() => setSelected(p)}
+                style={{
+                  background: selected?.id === p.id ? 'rgba(79,158,255,0.1)' : 'rgba(255,255,255,0.03)',
+                  border: `1px solid ${selected?.id === p.id ? 'rgba(79,158,255,0.4)' : '#1F2937'}`,
+                  borderRadius: 8, padding: 9, marginBottom: 7, cursor: 'pointer',
+                }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <img
+                    src={p.images?.[0]?.url || p.images?.[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=100&q=60'}
+                    alt="" style={{ width: 62, height: 48, borderRadius: 6, objectFit: 'cover', flexShrink: 0 }}
+                    onError={e => { e.target.src = 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=100&q=60'; }}
+                  />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#F9FAFB' }}>{p.price_display}</div>
+                    <div style={{ fontSize: 11, color: '#9CA3AF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{p.title}</div>
+                    <div style={{ fontSize: 10, color: '#6B7280', marginTop: 3 }}>📍 {p.area}</div>
                   </div>
                 </div>
-              );
-            })
+              </div>
+            ))
           )}
         </div>
       </div>
 
-      {/* SVG Map */}
-      <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#0d1117', cursor: 'crosshair' }}>
-        <svg
-          ref={svgRef}
-          width="100%" height="100%"
-          viewBox={`0 0 ${W} ${H}`}
-          onClick={handleMapClick}
-          style={{ display: 'block' }}
-        >
-          {/* Background grid */}
-          <defs>
-            <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-              <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="0.5"/>
-            </pattern>
-            <radialGradient id="centerGlow" cx="50%" cy="50%">
-              <stop offset="0%" stopColor="rgba(79,158,255,0.06)" />
-              <stop offset="100%" stopColor="transparent" />
-            </radialGradient>
-          </defs>
-          <rect width={W} height={H} fill="#0d1117" />
-          <rect width={W} height={H} fill="url(#grid)" />
-          <ellipse cx={W/2} cy={H/2} rx={W*0.6} ry={H*0.6} fill="url(#centerGlow)" />
+      {/* ── Leaflet Map ── */}
+      <div style={{ flex: 1, position: 'relative' }}>
+        <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 
-          {/* City label */}
-          <text x={W/2} y={32} fill="rgba(255,255,255,0.08)" fontSize={20} fontWeight={900}
-            textAnchor="middle" fontFamily="Syne,sans-serif" letterSpacing="-1">{city.toUpperCase()}</text>
-
-          {/* Property markers */}
-          {properties.map(p => {
-            const { x, y } = toXY(p.lat, p.lng);
-            if (x < 0 || x > W || y < 0 || y > H) return null;
-            const isHov = hovered?.id === p.id;
-            const isFeat = p.featured;
-            const r = isHov ? 13 : isFeat ? 9 : 7;
-            return (
-              <g key={p.id} style={{ cursor: 'pointer' }}
-                onClick={e => { e.stopPropagation(); setSelected(p); }}
-                onMouseEnter={() => setHovered(p)}
-                onMouseLeave={() => setHovered(null)}
-              >
-                {isHov && <circle cx={x} cy={y} r={22} fill="rgba(79,158,255,0.12)" />}
-                <circle cx={x} cy={y} r={r}
-                  fill={isHov ? '#4f9eff' : isFeat ? '#fbbf24' : 'rgba(79,158,255,0.75)'}
-                  stroke={isHov ? '#fff' : isFeat ? 'rgba(251,191,36,0.5)' : 'rgba(79,158,255,0.3)'}
-                  strokeWidth={isHov ? 2 : 1}
-                  style={{ transition: 'all 0.15s' }}
-                />
-                {isHov && (
-                  <text x={x} y={y - 18} fill="#fff" fontSize={10} textAnchor="middle"
-                    fontFamily="DM Sans,sans-serif" fontWeight={700}>{fmt(p.price, symbol)}</text>
-                )}
-              </g>
-            );
-          })}
-
-          {/* Dropped pin */}
-          {pin && (
-            <g>
-              <circle cx={pin.x} cy={pin.y} r={28} fill="rgba(45,212,191,0.12)" />
-              <circle cx={pin.x} cy={pin.y} r={14} fill="rgba(45,212,191,0.3)" stroke="#2dd4bf" strokeWidth={2} />
-              <circle cx={pin.x} cy={pin.y} r={5} fill="#2dd4bf" />
-              <text x={pin.x} y={pin.y - 22} fill="#2dd4bf" fontSize={10} textAnchor="middle"
-                fontFamily="DM Sans,sans-serif" fontWeight={700}>📍 Pin</text>
-            </g>
-          )}
-        </svg>
-
-        {/* Hover tooltip */}
-        {hovered && (
-          <div style={{
-            position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)',
-            background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '10px 14px',
-            display: 'flex', gap: 10, alignItems: 'center',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.6)', pointerEvents: 'none',
-            maxWidth: 320,
-          }}>
-            <img src={hovered.images?.[0]} alt="" style={{ width: 48, height: 36, borderRadius: 6, objectFit: 'cover' }}
-              onError={e => { e.target.src = 'https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?w=100&q=50'; }} />
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: C.text, fontFamily: T.display }}>{fmt(hovered.price, symbol)}</div>
-              <div style={{ fontSize: 11, color: C.muted }}>{hovered.title}</div>
-              <div style={{ fontSize: 10, color: C.dim }}>📍 {hovered.area}</div>
-            </div>
-          </div>
-        )}
-
-        {/* Map legend */}
+        {/* Legend overlay */}
         <div style={{
-          position: 'absolute', top: 14, right: 14,
-          background: 'rgba(7,9,16,0.85)', backdropFilter: 'blur(10px)',
-          border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 14px',
-          fontSize: 10, color: C.dim,
+          position: 'absolute', top: 14, right: 14, zIndex: 1000,
+          background: 'rgba(7,9,16,0.88)', backdropFilter: 'blur(8px)',
+          border: '1px solid #1F2937', borderRadius: 9, padding: '10px 13px', fontSize: 10, color: '#6B7280',
         }}>
-          <div style={{ fontWeight: 700, color: C.muted, marginBottom: 7, fontSize: 11 }}>Map Legend</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-            <div style={{ width: 9, height: 9, borderRadius: '50%', background: 'rgba(79,158,255,0.75)' }} />
-            Property listing
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-            <div style={{ width: 9, height: 9, borderRadius: '50%', background: '#fbbf24' }} />
-            Featured
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-            <div style={{ width: 9, height: 9, borderRadius: '50%', background: '#2dd4bf' }} />
-            Your pin
-          </div>
-          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 7, color: C.dim }}>
-            Click anywhere to drop pin
-          </div>
+          <div style={{ fontWeight: 700, color: '#9CA3AF', marginBottom: 6, fontSize: 11 }}>Legend</div>
+          {[['#4F9EFF', 'Listing'], ['#FBBF24', 'Featured'], ['#2DD4BF', 'Your pin']].map(([color, label]) => (
+            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', background: color }} />
+              {label}
+            </div>
+          ))}
+          <div style={{ borderTop: '1px solid #1F2937', paddingTop: 6, marginTop: 4 }}>Click to drop pin</div>
         </div>
 
         {loading && (
-          <div style={{ position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', background: 'rgba(7,9,16,0.8)', padding: '6px 14px', borderRadius: 99, fontSize: 11, color: C.muted }}>
+          <div style={{
+            position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 1000,
+            background: 'rgba(7,9,16,0.85)', padding: '6px 14px', borderRadius: 20, fontSize: 11, color: '#9CA3AF',
+          }}>
             Loading {city}…
           </div>
         )}
       </div>
 
-      {selected && <PropertyDetail property={selected} onClose={() => setSelected(null)} country={country} />}
+      {/* Property detail modal */}
+      {selected && (
+        <PropertyModal property={selected} symbol={symbol} country={country} onClose={() => setSelected(null)} />
+      )}
+    </div>
+  );
+}
+
+function PropertyModal({ property: p, symbol, country, onClose }) {
+  const imgs = (p.images || []).map(i => typeof i === 'string' ? i : i?.url).filter(Boolean);
+  const img  = imgs[0] || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=600&q=70';
+
+  return (
+    <div style={{
+      position: 'absolute', right: 0, top: 0, width: 360, height: '100%',
+      background: '#111827', borderLeft: '1px solid #1F2937',
+      overflowY: 'auto', zIndex: 2000, display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{ position: 'relative' }}>
+        <img src={img} alt={p.title} style={{ width: '100%', height: 200, objectFit: 'cover' }}
+          onError={e => { e.target.src = 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=600&q=70'; }} />
+        <button onClick={onClose} style={{
+          position: 'absolute', top: 10, right: 10, width: 28, height: 28,
+          borderRadius: '50%', background: 'rgba(0,0,0,0.6)', border: 'none',
+          color: '#fff', fontSize: 16, cursor: 'pointer', lineHeight: 1,
+        }}>✕</button>
+        {p.featured && (
+          <span style={{ position: 'absolute', top: 10, left: 10, padding: '2px 7px',
+            background: '#FBBF24', color: '#78350F', borderRadius: 5, fontSize: 10, fontWeight: 700 }}>
+            ⭐ FEATURED
+          </span>
+        )}
+      </div>
+      <div style={{ padding: '16px 16px 24px' }}>
+        <div style={{ fontSize: 24, fontWeight: 900, color: '#F9FAFB', marginBottom: 4 }}>{p.price_display}</div>
+        <div style={{ fontSize: 13, color: '#9CA3AF', marginBottom: 12 }}>{p.title}</div>
+        <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 14 }}>📍 {p.area}, {p.city}</div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
+          {[
+            ['🛏', `${p.bedrooms || '—'} Beds`],
+            ['🚿', `${p.bathrooms || '—'} Baths`],
+            ['📐', `${p.area_sqft || '—'} sqft`],
+            ['🏠', p.property_type || '—'],
+            ['🔑', p.tenure || '—'],
+            ['⚡', p.epc_rating ? `EPC ${p.epc_rating}` : '—'],
+          ].map(([icon, val]) => (
+            <div key={val} style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 7, padding: '8px 10px' }}>
+              <div style={{ fontSize: 14, marginBottom: 2 }}>{icon}</div>
+              <div style={{ fontSize: 12, color: '#9CA3AF' }}>{val}</div>
+            </div>
+          ))}
+        </div>
+
+        {p.amenities?.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 14 }}>
+            {p.amenities.slice(0, 6).map(a => (
+              <span key={a} style={{ padding: '2px 7px', background: 'rgba(79,158,255,0.1)',
+                border: '1px solid rgba(79,158,255,0.2)', borderRadius: 4, fontSize: 10, color: '#4F9EFF' }}>
+                {a}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {p.source_url && (
+          <a href={p.source_url} target="_blank" rel="noreferrer" style={{
+            display: 'block', textAlign: 'center', padding: '10px',
+            background: '#1B4FD8', color: '#fff', borderRadius: 8, fontSize: 13,
+            fontWeight: 600, textDecoration: 'none',
+          }}>
+            View Full Listing →
+          </a>
+        )}
+
+        {p.lat && p.lng && (
+          <a href={`https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`}
+            target="_blank" rel="noreferrer" style={{
+              display: 'block', textAlign: 'center', padding: '9px',
+              background: 'rgba(255,255,255,0.05)', color: '#9CA3AF',
+              border: '1px solid #374151', borderRadius: 8, fontSize: 12,
+              textDecoration: 'none', marginTop: 8,
+            }}>
+            🗺️ Open in Google Maps
+          </a>
+        )}
+      </div>
     </div>
   );
 }

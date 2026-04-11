@@ -1,36 +1,62 @@
-import { createContext, useContext, useState } from 'react';
-// FIX: removed unused `useEffect` import
-import { generateCitiesForCountry, SUPPORTED_COUNTRIES, COUNTRY_CITY_FALLBACKS } from '../services/gemini.js';
+/**
+ * UrbanNest AI — Global App State
+ * Country, city, and user preferences shared across all pages.
+ */
+import { createContext, useContext, useState, useEffect } from 'react';
+import { getCountries } from '../services/api.js';
 
 const GlobalCtx = createContext(null);
 
 export function GlobalProvider({ children }) {
-  const [country, setCountry] = useState('United Kingdom');
-  const [city, setCity]       = useState('London');
-  const [cities, setCities]   = useState(COUNTRY_CITY_FALLBACKS['United Kingdom']);
-  const [citiesLoading, setCitiesLoading] = useState(false);
+  const [country, setCountry]   = useState('uk');
+  const [city, setCity]         = useState('London');
+  const [countries, setCountries] = useState({});
+  const [loading, setLoading]   = useState(true);
 
-  async function changeCountry(newCountry) {
-    setCountry(newCountry);
-    setCity('');
-    setCities([]);
-    setCitiesLoading(true);
-    try {
-      const list = await generateCitiesForCountry(newCountry);
-      const safeList = Array.isArray(list) && list.length > 0 ? list : (COUNTRY_CITY_FALLBACKS[newCountry] || COUNTRY_CITY_FALLBACKS['United Kingdom']);
-      setCities(safeList);
-      setCity(safeList[0] || '');
-    } catch {
-      const fallback = COUNTRY_CITY_FALLBACKS[newCountry] || COUNTRY_CITY_FALLBACKS['United Kingdom'];
-      setCities(fallback);
-      setCity(fallback[0] || '');
-    } finally {
-      setCitiesLoading(false);
-    }
+  useEffect(() => {
+    getCountries()
+      .then(data => {
+        setCountries(data);
+        // Restore from localStorage
+        const savedCountry = localStorage.getItem('un_country');
+        const savedCity    = localStorage.getItem('un_city');
+        if (savedCountry && data[savedCountry]) setCountry(savedCountry);
+        if (savedCity) setCity(savedCity);
+      })
+      .catch(() => {
+        // Fallback config if backend unavailable
+        setCountries({
+          uk:    { cities: ['London','Manchester','Birmingham','Edinburgh','Bristol'], symbol: '£', property_types: ['Flat','Terraced House','Semi-Detached','Detached House'] },
+          india: { cities: ['Mumbai','Delhi','Bangalore','Hyderabad','Chennai','Pune'], symbol: '₹', property_types: ['1BHK','2BHK','3BHK','Villa','Plot'] },
+        });
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  function changeCountry(c) {
+    setCountry(c);
+    const cfg = countries[c];
+    const defaultCity = cfg?.default_city || (cfg?.cities || [])[0] || '';
+    setCity(defaultCity);
+    localStorage.setItem('un_country', c);
+    localStorage.setItem('un_city', defaultCity);
   }
 
+  function changeCity(c) {
+    setCity(c);
+    localStorage.setItem('un_city', c);
+  }
+
+  const cfg      = countries[country] || {};
+  const cities   = cfg.cities || [];
+  const symbol   = cfg.symbol || '£';
+  const propTypes = cfg.property_types || [];
+
   return (
-    <GlobalCtx.Provider value={{ country, city, setCity, cities, citiesLoading, changeCountry, supportedCountries: SUPPORTED_COUNTRIES }}>
+    <GlobalCtx.Provider value={{
+      country, city, countries, cities, symbol, propTypes,
+      loading, changeCountry, changeCity,
+    }}>
       {children}
     </GlobalCtx.Provider>
   );

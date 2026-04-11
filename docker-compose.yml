@@ -1,0 +1,93 @@
+version: '3.9'
+
+services:
+  # ── PostgreSQL ────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       urbannest
+      POSTGRES_USER:     urbannest
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U urbannest"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (cache + task queue) ────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── FastAPI Backend ───────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://urbannest:${DB_PASSWORD:-secret123}@postgres:5432/urbannest
+      REDIS_URL:    redis://redis:6379/0
+    command: uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+      - faiss_data:/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Celery Worker + Beat Scheduler ───────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://urbannest:${DB_PASSWORD:-secret123}@postgres:5432/urbannest
+      REDIS_URL:    redis://redis:6379/0
+    command: celery -A workers.celery_app worker --beat --loglevel=info --concurrency=2
+    volumes:
+      - ./backend:/app
+      - faiss_data:/data
+    depends_on:
+      - backend
+      - redis
+      - postgres
+
+  # ── React Frontend ────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    command: npm run dev -- --host 0.0.0.0
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  faiss_data:

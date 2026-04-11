@@ -1,40 +1,57 @@
 """
-UrbanNest UK — FastAPI Backend v3
-Agentic pipeline: Fetch → Clean → Validate Location → Deduplicate → Serve
+UrbanNest AI — FastAPI Backend v4
+Multi-country AI-powered real estate platform.
+Entry point: uvicorn backend.api.main:app --host 0.0.0.0 --port 8000
 """
-import os
-import sys
-import logging
+import os, sys, logging
 from datetime import datetime
-from typing import Optional, List
+from contextlib import asynccontextmanager
+from typing import Optional
 
-# Ensure backend package is importable on Render
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# ── Path bootstrap (must be first) ────────────────────────────────────
+_backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_project_dir = os.path.dirname(_backend_dir)
+for _p in [_backend_dir, _project_dir]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Lazy imports with fallback to avoid import errors on cold start
-try:
-    from backend.agents.data_fetch_agent import generate_deterministic_properties, CITY_CONFIG
-    from backend.agents.cleaning_agent import deduplicate_and_clean
-    from backend.agents.location_agent import validate_location, assign_location_metadata
-    from backend.services.cache import get as cache_get, set as cache_set, search_key, stats as cache_stats, invalidate_city
-    from backend.services.image_service import get_property_images
-    AGENTS_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Agent imports failed: {e} — using legacy mode")
-    AGENTS_AVAILABLE = False
+# ── Internal imports (after path bootstrap) ───────────────────────────
+from db.database import engine, SessionLocal, Base, get_db
+from db.models import Property, User, Favorite, Alert, AlertMatch
+from ai.query_parser import parse_query, filters_to_sql_summary
+from ai.rag_pipeline import rag_search, find_similar
+from ai.gemini_client import call_gemini, GeminiError
+from services.country_config import (
+    COUNTRY_CONFIG, fmt_price, get_config, SUPPORTED_COUNTRIES
+)
+
+# ── WebSocket manager (shared module, avoids circular imports) ────────
+from api.websocket_manager import ws_manager
+
+
+# ── App lifecycle ─────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Import models so Base.metadata has them registered
+    import db.models  # noqa: F401
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables created/verified")
+    yield
 
 app = FastAPI(
-    title="UrbanNest UK API v3",
-    description="Agentic real estate — validated, deduplicated, location-accurate data",
-    version="3.0.0",
+    title="UrbanNest AI Platform API v4",
+    description="Multi-country AI real estate — India & UK",
+    version="4.0.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -46,255 +63,384 @@ app.add_middleware(
 )
 
 
-def _get_all_properties_for_city(city: str) -> List[dict]:
-    cache_key = f"city:{city.lower()}"
-    cached = cache_get(cache_key)
-    if cached:
-        return cached
-
-    city_conf = CITY_CONFIG.get(city)
-    if not city_conf:
-        return []
-
-    all_props = []
-    for area in city_conf["areas"].keys():
-        area_props = generate_deterministic_properties(city, area, count=12)
-        all_props.extend(area_props)
-
-    all_props = deduplicate_and_clean(all_props)
-    all_props = validate_location(all_props, city)
-    all_props = [assign_location_metadata(p) for p in all_props]
-
-    for p in all_props:
-        p.pop("_dedup_hash", None)
-        p.pop("_location_validated", None)
-
-    cache_set(cache_key, all_props, ttl=600)
-    return all_props
-
-
-def _filter(items, params):
-    result = items
-    if params.get("city"):
-        result = [p for p in result if p.get("city","").lower() == params["city"].lower()]
-    if params.get("area"):
-        q = params["area"].lower()
-        result = [p for p in result if q in p.get("area","").lower() or q in p.get("address","").lower()]
-    if params.get("type"):
-        result = [p for p in result if p.get("type") == params["type"]]
-    if params.get("min_price"):
-        result = [p for p in result if p.get("price",0) >= int(params["min_price"])]
-    if params.get("max_price"):
-        result = [p for p in result if p.get("price",0) <= int(params["max_price"])]
-    if params.get("bedrooms"):
-        try:
-            beds = int(str(params["bedrooms"]).replace("Bed","").replace("+","").strip())
-            result = [p for p in result if p.get("bedrooms",0) >= beds]
-        except ValueError:
-            pass
-    if params.get("furnishing"):
-        result = [p for p in result if p.get("furnishing") == params["furnishing"]]
-    if params.get("query"):
-        q = params["query"].lower()
-        result = [p for p in result if any(q in str(p.get(f,"")).lower() for f in ("title","area","city","type","address"))]
-    return result
-
-
-def _sort(items, sort):
-    if sort == "price_asc":   return sorted(items, key=lambda x: x.get("price",0))
-    if sort == "price_desc":  return sorted(items, key=lambda x: x.get("price",0), reverse=True)
-    if sort == "rating":      return sorted(items, key=lambda x: x.get("rating",0), reverse=True)
-    if sort == "area":        return sorted(items, key=lambda x: x.get("area_sqft",0), reverse=True)
-    return sorted(items, key=lambda x: (0 if x.get("featured") else 1, -x.get("rating",0)))
-
-
-def _serialise(props):
-    items = []
-    for p in props:
-        item = dict(p)
-        item["images"] = [img["url"] if isinstance(img, dict) else img for img in item.get("images", [])]
-        items.append(item)
-    return items
-
+# ══════════════════════════════════════════════════════════════════════
+# HEALTH & CONFIG
+# ══════════════════════════════════════════════════════════════════════
 
 @app.get("/api/health")
-def health():
+def health(db: Session = Depends(get_db)):
+    try:
+        prop_count = db.query(Property).count()
+    except Exception:
+        prop_count = -1
     return {
-        "status": "healthy", "version": "3.0.0",
-        "agents_available": AGENTS_AVAILABLE,
-        "cities": list(CITY_CONFIG.keys()) if AGENTS_AVAILABLE else [],
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-        "cache": cache_stats() if AGENTS_AVAILABLE else {},
+        "status":             "healthy",
+        "version":            "4.0.0",
+        "timestamp":          datetime.utcnow().isoformat() + "Z",
+        "supported_countries": SUPPORTED_COUNTRIES,
+        "property_count":     prop_count,
+        "gemini_model":       "gemini-2.0-flash (v1beta)",
     }
 
 
-@app.get("/api/cities")
-def get_cities():
-    if not AGENTS_AVAILABLE:
-        return {"cities": [], "data": {}}
-    result = {}
-    for city, conf in CITY_CONFIG.items():
-        result[city] = {
-            "areas": list(conf["areas"].keys()),
-            "avg_price": conf["base_price"],
-            "currency_symbol": conf.get("symbol","£"),
-            "lat": conf["lat"], "lng": conf["lng"],
+@app.get("/api/countries")
+def get_countries():
+    return {
+        country: {
+            "currency":     cfg["currency"],
+            "symbol":       cfg["symbol"],
+            "cities":       cfg["cities"],
+            "property_types": cfg["property_types"],
+            "default_city": cfg.get("default_city"),
+            "map_center":   cfg.get("map_center"),
         }
-    return {"cities": list(CITY_CONFIG.keys()), "data": result}
+        for country, cfg in COUNTRY_CONFIG.items()
+    }
 
 
-@app.get("/api/properties/search")
-def search_properties(
-    city:       Optional[str] = None,
-    area:       Optional[str] = None,
-    query:      Optional[str] = None,
-    type:       Optional[str] = None,
-    min_price:  Optional[int] = None,
-    max_price:  Optional[int] = None,
-    bedrooms:   Optional[str] = None,
-    furnishing: Optional[str] = None,
-    min_area:   Optional[int] = None,
-    max_area:   Optional[int] = None,
-    page:       int = Query(1, ge=1),
-    limit:      int = Query(20, ge=1, le=100),
-    sort:       str = "featured",
+# ══════════════════════════════════════════════════════════════════════
+# SEARCH
+# ══════════════════════════════════════════════════════════════════════
+
+@app.get("/api/search/nl")
+async def natural_language_search(
+    q:       str            = Query(..., description="NL query e.g. '2BHK under 50 lakhs Bangalore'"),
+    country: str            = Query("uk", enum=SUPPORTED_COUNTRIES),
+    city:    Optional[str]  = Query(None),
+    rag:     bool           = Query(False, description="Generate AI narrative response"),
+    db:      Session        = Depends(get_db),
 ):
-    if not AGENTS_AVAILABLE:
-        return {"total": 0, "page": page, "limit": limit, "items": [], "metadata": {"error": "agents unavailable"}}
+    filters = await parse_query(q, country=country, city=city)
+    result  = await rag_search(q, filters, db, k=24, generate_response=rag)
+    return {
+        "query":          q,
+        "filters_applied": filters,
+        "filter_summary": filters_to_sql_summary(filters),
+        **result,
+    }
 
-    filters = {k: v for k, v in {"city":city,"area":area,"query":query,"type":type,
-        "min_price":min_price,"max_price":max_price,"bedrooms":bedrooms,
-        "furnishing":furnishing,"min_area":min_area,"max_area":max_area}.items() if v is not None}
 
-    ck = search_key(city or "all", area or "", {k:v for k,v in filters.items() if k not in ("city","area","query")})
-    cached_results = cache_get(ck)
+@app.get("/api/search/filter")
+def filter_search(
+    country:       str            = Query("uk", enum=SUPPORTED_COUNTRIES),
+    city:          Optional[str]  = None,
+    area:          Optional[str]  = None,
+    property_type: Optional[str]  = None,
+    min_price:     Optional[int]  = None,
+    max_price:     Optional[int]  = None,
+    bedrooms:      Optional[int]  = None,
+    bathrooms:     Optional[int]  = None,
+    furnishing:    Optional[str]  = None,
+    amenities:     Optional[str]  = None,
+    featured_only: bool           = False,
+    sort:          str            = Query("featured", enum=["featured", "price_asc", "price_desc", "newest"]),
+    page:          int            = Query(1, ge=1),
+    limit:         int            = Query(20, ge=1, le=100),
+    db:            Session        = Depends(get_db),
+):
+    q = db.query(Property).filter(Property.country == country)
 
-    if cached_results is None:
-        if city and city in CITY_CONFIG:
-            all_props = _get_all_properties_for_city(city)
-        elif city:
-            all_props = []
-        else:
-            all_props = []
-            for c in list(CITY_CONFIG.keys())[:4]:
-                all_props.extend(_get_all_properties_for_city(c))
+    if city:          q = q.filter(Property.city.ilike(f"%{city}%"))
+    if area:          q = q.filter(Property.area.ilike(f"%{area}%"))
+    if property_type: q = q.filter(Property.property_type.ilike(f"%{property_type}%"))
+    if bedrooms:      q = q.filter(Property.bedrooms >= bedrooms)
+    if bathrooms:     q = q.filter(Property.bathrooms >= bathrooms)
+    if furnishing:    q = q.filter(Property.furnishing.ilike(f"%{furnishing}%"))
+    if featured_only: q = q.filter(Property.featured == True)  # noqa: E712
+    if min_price:     q = q.filter(Property.price >= min_price * 100)
+    if max_price:     q = q.filter(Property.price <= max_price * 100)
 
-        filtered = _filter(all_props, filters)
-        if area:
-            filtered = validate_location(filtered, city or "", area)
-        filtered = _sort(filtered, sort)
-        cache_set(ck, filtered, ttl=600)
-        cached_results = filtered
+    if amenities:
+        for am in amenities.split(","):
+            am = am.strip()
+            if am:
+                q = q.filter(Property.amenities.contains([am]))
 
-    total = len(cached_results)
-    start = (page-1)*limit
-    items = _serialise(cached_results[start:start+limit])
+    if sort == "price_asc":    q = q.order_by(Property.price.asc())
+    elif sort == "price_desc": q = q.order_by(Property.price.desc())
+    elif sort == "newest":     q = q.order_by(Property.listed_at.desc())
+    else:                      q = q.order_by(Property.featured.desc(), Property.rating.desc().nullslast())
 
-    return {"total": total, "page": page, "limit": limit, "items": items,
-            "metadata": {"city":city,"area":area,"data_source":"agentic_v3",
-                         "timestamp": datetime.utcnow().isoformat()+"Z"}}
+    total = q.count()
+    items = q.offset((page - 1) * limit).limit(limit).all()
+    return {"total": total, "page": page, "limit": limit, "items": [p.to_dict() for p in items]}
 
 
 @app.get("/api/properties/featured")
-def get_featured(limit: int = Query(6, ge=1, le=20)):
-    if not AGENTS_AVAILABLE:
-        return {"items": [], "total": 0}
-    featured = []
-    for city in CITY_CONFIG.keys():
-        props = _get_all_properties_for_city(city)
-        featured.extend([p for p in props if p.get("featured")][:2])
-    seen, unique = set(), []
-    for p in featured:
-        if p.get("id") not in seen:
-            seen.add(p["id"])
-            unique.append(p)
-    return {"items": _serialise(unique[:limit]), "total": len(unique[:limit])}
+def get_featured(
+    country: str     = Query("uk", enum=SUPPORTED_COUNTRIES),
+    limit:   int     = Query(8, ge=1, le=20),
+    db:      Session = Depends(get_db),
+):
+    items = (
+        db.query(Property)
+        .filter(Property.country == country, Property.featured == True)  # noqa: E712
+        .order_by(Property.rating.desc().nullslast())
+        .limit(limit)
+        .all()
+    )
+    return {"items": [p.to_dict() for p in items], "total": len(items)}
 
 
 @app.get("/api/properties/{property_id}")
-def get_property(property_id: str):
-    if not AGENTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Service unavailable")
-    for city in CITY_CONFIG.keys():
-        for p in _get_all_properties_for_city(city):
-            if p.get("id") == property_id:
-                item = dict(p)
-                item["images"] = [img["url"] if isinstance(img,dict) else img for img in item.get("images",[])]
-                return item
-    raise HTTPException(status_code=404, detail=f"Property {property_id!r} not found")
+def get_property(property_id: str, db: Session = Depends(get_db)):
+    p = db.query(Property).filter(Property.id == property_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail=f"Property {property_id!r} not found")
+    return p.to_dict()
 
 
-@app.get("/api/market/{city}/{area}")
-def get_market_data(city: str, area: str):
-    if not AGENTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Service unavailable")
-    props = _get_all_properties_for_city(city)
-    area_props = [p for p in props if p.get("area","").lower() == area.lower()]
-    if not area_props:
-        raise HTTPException(status_code=404, detail=f"No data for {area}, {city}")
-    prices = [p["price"] for p in area_props if p.get("price",0) > 0]
-    sqfts  = [p["price_per_sqft"] for p in area_props if p.get("price_per_sqft",0) > 0]
-    avg_price = int(sum(prices)/len(prices)) if prices else 0
-    avg_ppsf  = int(sum(sqfts)/len(sqfts)) if sqfts else 0
-    conf = CITY_CONFIG.get(city, {})
-    return {
-        "city": city, "area": area,
-        "avg_price": avg_price, "avg_price_sqft": avg_ppsf,
-        "total_listings": len(area_props),
-        "price_change_1y": 6.8, "price_trend": "Rising", "demand_level": "High",
-        "rental_yield_avg": round(4.2 + avg_price/2_000_000, 1),
-        "investment_rating": 7.5,
-        "currency_symbol": conf.get("symbol","£"),
-        "data_source": "computed_from_listings",
-        "timestamp": datetime.utcnow().isoformat()+"Z",
-    }
+@app.get("/api/properties/{property_id}/similar")
+async def get_similar(property_id: str, db: Session = Depends(get_db)):
+    similar = await find_similar(property_id, db, k=8)
+    return {"items": similar, "total": len(similar)}
 
 
-@app.get("/api/price-estimate")
-def price_estimate(
-    city: str, area: str, property_type: str, area_sqft: int,
-    bedrooms: Optional[int] = None, age: Optional[int] = None,
+# ══════════════════════════════════════════════════════════════════════
+# FAVORITES
+# ══════════════════════════════════════════════════════════════════════
+
+@app.post("/api/favorites/{property_id}")
+def save_favorite(
+    property_id: str,
+    user_id:     str            = Query(...),
+    notes:       Optional[str]  = None,
+    db:          Session        = Depends(get_db),
 ):
-    if not AGENTS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Service unavailable")
-    city_conf = CITY_CONFIG.get(city)
-    if not city_conf:
-        raise HTTPException(status_code=400, detail=f"Unknown city: {city}")
-    area_conf   = city_conf["areas"].get(area, {"premium": 1.0})
-    type_mult   = {"Penthouse":1.7,"Detached House":1.4,"Semi-Detached":1.1,"Terraced House":1.0,
-                   "Flat":0.95,"Maisonette":0.95,"Bungalow":1.2,"Studio":0.75,"Commercial":1.3,"Land":0.5}
-    age_factor  = max(0.75, 1.0 - (age or 0) * 0.004)
-    type_factor = type_mult.get(property_type, 1.0)
-    props       = _get_all_properties_for_city(city)
-    area_props  = [p for p in props if p.get("area","").lower()==area.lower() and p.get("price_per_sqft",0)>0]
-    avg_ppsf    = int(sum(p["price_per_sqft"] for p in area_props)/len(area_props)) if area_props else city_conf["base_price"]//800
-    ppsf        = int(avg_ppsf * type_factor * age_factor)
-    price       = ppsf * area_sqft
-    rental_yield= round(4.0 + area_conf.get("premium",1.0) * 0.5, 1)
-    def sdlt(p):
-        if p<=250000: return 0
-        if p<=925000: return int((p-250000)*0.05)
-        if p<=1500000: return int(33750+(p-925000)*0.10)
-        return int(91250+(p-1500000)*0.12)
+    if not db.query(Property).filter(Property.id == property_id).first():
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    existing = db.query(Favorite).filter(
+        Favorite.user_id == user_id,
+        Favorite.property_id == property_id,
+    ).first()
+    if existing:
+        return {"message": "Already saved", "saved": True}
+
+    db.add(Favorite(user_id=user_id, property_id=property_id, notes=notes))
+    db.commit()
+    return {"message": "Saved", "saved": True}
+
+
+@app.delete("/api/favorites/{property_id}")
+def remove_favorite(
+    property_id: str,
+    user_id:     str     = Query(...),
+    db:          Session = Depends(get_db),
+):
+    fav = db.query(Favorite).filter(
+        Favorite.user_id == user_id,
+        Favorite.property_id == property_id,
+    ).first()
+    if fav:
+        db.delete(fav)
+        db.commit()
+    return {"message": "Removed", "saved": False}
+
+
+@app.get("/api/favorites")
+def get_favorites(user_id: str = Query(...), db: Session = Depends(get_db)):
+    favs = (
+        db.query(Favorite)
+        .filter(Favorite.user_id == user_id)
+        .order_by(Favorite.saved_at.desc())
+        .all()
+    )
     return {
-        "predicted_price": price, "price_per_sqft": ppsf,
-        "price_range_low": int(price*0.91), "price_range_high": int(price*1.09),
-        "confidence": 72, "currency_symbol": city_conf.get("symbol","£"),
-        "rental_yield_pct": rental_yield,
-        "estimated_monthly_rental": int(price*rental_yield/100/12),
-        "market_trend":"Rising", "stamp_duty_estimate": sdlt(price),
-        "data_source":"pipeline_computed",
-        "timestamp": datetime.utcnow().isoformat()+"Z",
+        "items": [
+            {**f.property.to_dict(), "saved_at": f.saved_at.isoformat(), "notes": f.notes}
+            for f in favs if f.property
+        ],
+        "total": len(favs),
     }
 
 
-@app.get("/api/cache/stats")
-def get_cache():
-    return cache_stats() if AGENTS_AVAILABLE else {}
+# ══════════════════════════════════════════════════════════════════════
+# ALERTS
+# ══════════════════════════════════════════════════════════════════════
+
+@app.post("/api/alerts")
+async def create_alert(
+    query:   str            = Query(...),
+    country: str            = Query("uk"),
+    city:    Optional[str]  = None,
+    user_id: str            = Query(...),
+    db:      Session        = Depends(get_db),
+):
+    filters = await parse_query(query, country=country, city=city)
+    alert = Alert(
+        user_id=user_id,
+        query_text=query,
+        filters=filters,
+        country=country,
+        city=city or filters.get("city"),
+        is_active=True,
+    )
+    db.add(alert)
+    db.commit()
+    db.refresh(alert)
+    return {"alert_id": alert.id, "query": query, "filters": filters}
 
 
-@app.delete("/api/cache/{city}")
-def clear_cache(city: str):
-    if AGENTS_AVAILABLE:
-        invalidate_city(city)
-    return {"message": f"Cache cleared for {city}"}
+@app.get("/api/alerts")
+def get_alerts(user_id: str = Query(...), db: Session = Depends(get_db)):
+    alerts = db.query(Alert).filter(Alert.user_id == user_id).all()
+    return {
+        "alerts": [
+            {"id": a.id, "query": a.query_text, "is_active": a.is_active,
+             "match_count": a.match_count, "created_at": a.created_at.isoformat() if a.created_at else None}
+            for a in alerts
+        ]
+    }
+
+
+@app.delete("/api/alerts/{alert_id}")
+def delete_alert(alert_id: str, user_id: str = Query(...), db: Session = Depends(get_db)):
+    a = db.query(Alert).filter(Alert.id == alert_id, Alert.user_id == user_id).first()
+    if a:
+        db.delete(a)
+        db.commit()
+    return {"deleted": True}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# AI FEATURES
+# ══════════════════════════════════════════════════════════════════════
+
+@app.post("/api/ai/advisor")
+async def ai_advisor(
+    message: str            = Query(...),
+    country: str            = Query("uk"),
+    city:    Optional[str]  = None,
+    history: Optional[str]  = None,
+):
+    import json as _json
+    ctx = ""
+    if history:
+        try:
+            msgs = _json.loads(history)
+            ctx  = "\n".join(
+                f"{'USER' if m['role']=='user' else 'ADVISOR'}: {m['text']}"
+                for m in msgs[-6:]
+            )
+        except Exception:
+            pass
+
+    prompt = f"""You are an expert property advisor for {country.upper()} real estate.
+{f'City focus: {city}.' if city else ''} Date: {datetime.utcnow().strftime('%B %Y')}.
+
+{ctx}
+
+USER: {message}
+
+ADVISOR: Give expert, specific advice. For UK mention SDLT, EPC, freehold/leasehold.
+For India mention RERA, stamp duty, carpet vs built-up area. 2-4 paragraphs, no bullet lists."""
+
+    try:
+        response = await call_gemini(prompt, max_tokens=800)
+        return {"response": response}
+    except GeminiError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.post("/api/ai/valuation")
+async def ai_valuation(
+    country:       str            = Query("uk"),
+    city:          str            = Query(...),
+    area:          Optional[str]  = None,
+    property_type: str            = Query("Flat"),
+    size_sqft:     Optional[int]  = None,
+    bedrooms:      Optional[int]  = None,
+    condition:     str            = Query("Good"),
+):
+    cfg = get_config(country)
+    prompt = f"""Property valuation for {country.upper()}.
+Location: {area or city}, {city} | Type: {property_type}
+Size: {size_sqft or 'unknown'} sqft | Beds: {bedrooms or 'N/A'} | Condition: {condition}
+
+Return ONLY valid JSON, no markdown:
+{{"estimated_price":0,"currency":"{cfg['currency']}","price_range_low":0,"price_range_high":0,
+"price_per_sqft":0,"confidence_pct":75,"estimated_monthly_rent":0,"gross_rental_yield":0.0,
+"annual_growth_pct":0.0,"investment_rating":"Good","market_sentiment":"Stable",
+"key_drivers":["driver1"],"risk_factors":["risk1"],"ai_analysis":"analysis here."}}"""
+
+    try:
+        result = await call_gemini(prompt, json_mode=True, max_tokens=1024)
+        if isinstance(result, dict):
+            ep = result.get("estimated_price", 0)
+            result["price_display"] = fmt_price(ep * 100, country) if ep else "—"
+        return result
+    except GeminiError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.get("/api/ai/market")
+async def market_intelligence(
+    country: str            = Query("uk"),
+    city:    str            = Query(...),
+    area:    Optional[str]  = None,
+    profile: str            = Query("general"),
+):
+    cfg = get_config(country)
+    prompt = f"""Real estate market analysis for {country.upper()}.
+Location: {area or 'city-wide'}, {city} | Profile: {profile} | Year: {datetime.utcnow().year}
+
+Return ONLY valid JSON, no markdown:
+{{"market_summary":"overview","avg_price":0,"currency_symbol":"{cfg['symbol']}",
+"price_change_1y_pct":0.0,"price_change_5y_pct":0.0,"avg_rental_yield":0.0,
+"demand_level":"Moderate","supply_level":"Moderate","market_phase":"Stable",
+"investment_score":7.0,"top_growth_areas":[{{"area":"name","growth_pct":0.0}}],
+"key_drivers":[{{"driver":"name","impact":"Positive"}}],
+"risks":[{{"risk":"name","severity":"Low"}}],
+"buyer_advice":"advice","investor_verdict":"verdict"}}"""
+
+    try:
+        return await call_gemini(prompt, json_mode=True, max_tokens=1024)
+    except GeminiError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# WEBSOCKET — real-time alerts
+# ══════════════════════════════════════════════════════════════════════
+
+@app.websocket("/ws/alerts/{user_id}")
+async def websocket_alerts(websocket: WebSocket, user_id: str):
+    await ws_manager.connect(user_id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(user_id)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# ADMIN — data ingest & index rebuild
+# ══════════════════════════════════════════════════════════════════════
+
+@app.post("/api/admin/ingest")
+async def trigger_ingest(
+    country:   str            = Query("uk", enum=SUPPORTED_COUNTRIES),
+    city:      Optional[str]  = None,
+    admin_key: str            = Query(...),
+    db:        Session        = Depends(get_db),
+):
+    if admin_key != os.environ.get("ADMIN_KEY", ""):
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    from agents.scraper_agent import scrape_all_india, scrape_all_uk
+    from agents.cleaning_agent import ingest_listings
+
+    cities   = [city] if city else None
+    listings = await (scrape_all_india(cities) if country == "india" else scrape_all_uk(cities))
+    stats    = ingest_listings(listings, db)
+    return {"ingested": stats, "country": country}
+
+
+@app.post("/api/admin/rebuild-index")
+def rebuild_faiss_index(admin_key: str = Query(...), db: Session = Depends(get_db)):
+    if admin_key != os.environ.get("ADMIN_KEY", ""):
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    from ai.rag_pipeline import rebuild_index
+    return {"status": "rebuilt", **rebuild_index(db)}

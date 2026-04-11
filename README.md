@@ -1,180 +1,223 @@
-# 🏙️ MetroFlats Pro — AI-Powered Real Estate Platform
+# UrbanNest AI Platform v4
 
-A comprehensive, production-ready real estate ecosystem for India, featuring AI-powered search, price prediction, market analysis, and a full CRM system.
+AI-powered real estate search for **India** 🇮🇳 and **UK** 🇬🇧.
+Natural language queries · FAISS semantic search · Gemini 2.0 Flash · Real-time scraping · Property alerts.
 
 ---
 
-## 🗂️ Project Structure
+## 🚀 Quick Start (Local Dev)
 
-```
-MetroFlats-Pro/
-├── frontend/                    ← Main real estate portal (React + Vite)
-│   ├── src/
-│   │   ├── App.jsx              ← Root app with routing & auth guard
-│   │   ├── components/
-│   │   │   ├── ai/
-│   │   │   │   ├── PricePrediction.jsx   ← AI price predictor (Gemini)
-│   │   │   │   ├── MarketAnalysis.jsx    ← Market insights (Gemini)
-│   │   │   │   └── PropertyAdvisor.jsx   ← AI advisor (Gemini + fallback)
-│   │   │   ├── layout/
-│   │   │   │   ├── Navbar.jsx            ← Sticky nav with auth
-│   │   │   │   └── AuthModal.jsx         ← Sign-in / register modal
-│   │   │   ├── map/
-│   │   │   │   └── MapView.jsx           ← Interactive map (Google Maps / SVG fallback)
-│   │   │   ├── property/
-│   │   │   │   ├── PropertyCard.jsx      ← Listing card with ratings
-│   │   │   │   └── PropertyDetail.jsx    ← Full property modal
-│   │   │   └── search/
-│   │   │       └── SearchPanel.jsx       ← Advanced filters + amenity prefs
-│   │   ├── hooks/
-│   │   │   └── useAuth.jsx               ← Auth context provider
-│   │   ├── pages/
-│   │   │   ├── Home.jsx                  ← Landing page (guest-friendly)
-│   │   │   ├── Search.jsx                ← Full search results
-│   │   │   ├── Map.jsx                   ← Map-based property search
-│   │   │   ├── Advisor.jsx               ← AI advisor page
-│   │   │   ├── Predict.jsx               ← Price prediction page
-│   │   │   └── Market.jsx                ← Market analysis page
-│   │   ├── services/
-│   │   │   └── ai.js                     ← Gemini AI + backend API calls
-│   │   └── utils/
-│   │       └── design.js                 ← Design tokens, formatters, constants
-│   ├── public/
-│   │   └── favicon.svg
-│   ├── index.html
-│   ├── vite.config.js
-│   ├── package.json
-│   ├── vercel.json
-│   └── .env.example
-│
-├── backend/                     ← Main FastAPI backend
-│   ├── api/
-│   │   └── main.py              ← Property API with dynamic data generation
-│   ├── requirements.txt
-│   ├── Dockerfile
-│   └── .env.example
-│
-├── crm/                         ← Real Estate CRM (separate app)
-│   ├── frontend/                ← CRM React app (port 5173)
-│   └── backend/                 ← CRM FastAPI (port 8001)
-│
-├── DEPLOYMENT.md                ← Full deployment guide
-└── GIT_SETUP.md
+### Prerequisites
+- Python 3.11+
+- Node.js 18+
+- Docker + Docker Compose
+- Gemini API key (free at [aistudio.google.com](https://aistudio.google.com))
+
+### 1. Clone & configure
+```bash
+git clone https://github.com/your-org/urbannest-ai
+cd urbannest-ai
+cp .env.example .env
+# Edit .env — fill in GEMINI_API_KEY and VITE_GEMINI_KEY
 ```
 
----
+### 2. Start infrastructure
+```bash
+docker compose up -d postgres redis
+```
 
-## ✨ Features
+### 3. Backend setup
+```bash
+cd backend
+pip install -r requirements.txt
+alembic upgrade head           # Create DB tables
+uvicorn backend.api.main:app --reload --port 8000
+```
 
-### 🏘️ Property Types
-Apartments · Villas · Penthouses · Bungalows · Plots · Land · Shops · Commercial Spaces · Rental Apartments · Studios
-
-### 🔍 Smart Search
-- Advanced filters: location, price range, area (sqft), property type, BHK, furnishing, availability
-- **AI-powered location suggestions** — type any area for Gemini-powered recommendations
-- **Amenity proximity preferences** — Schools, Hospitals, Clinics, Stores, Banks, Gyms, Parks, Metro with Low/Medium/High distance levels
-
-### 🤖 AI Features (require sign-in)
-| Feature | Description |
-|---|---|
-| **Price Prediction** | ML-powered valuation using Gemini — location, area, type, floor, furnishing |
-| **Market Analysis** | Price trends, demand/supply metrics, growth potential, upcoming projects |
-| **Property Advisor** | Personalised area recommendations with financial guidance and buyer checklist |
-| **Location Insights** | Safety, lifestyle, water availability, pollution, neighborhood culture ratings |
-
-### 🗺️ Map Search
-- Interactive map with property markers
-- Click-to-place custom markers
-- Google Maps integration (add `VITE_MAPS_KEY`) or SVG fallback
-- Property panel syncs with map selection
-
-### 📊 Property Listings
-- **Original images prioritised**, Unsplash fallback when unavailable
-- Multiple images with gallery navigation
-- 360° view flag support
-- Detailed ratings: Overall · Locality · Safety · Lifestyle · Water · Pollution · Culture
-- RERA verification badge
-- Builder information
-
-### 🔐 Auth & UX
-- Guest view: simplified interface with featured listings
-- Signed-in view: full AI features unlocked
-- Auth modal with feature showcase
-- Progressive engagement design
-
----
-
-## 🚀 Quick Start
-
-### Frontend
-
+### 4. Frontend setup
 ```bash
 cd frontend
-cp .env.example .env
-# Add your VITE_GEMINI_KEY and VITE_MAPS_KEY to .env
 npm install
-npm run dev
-# → http://localhost:3000
+npm run dev                    # Runs on http://localhost:5173
 ```
 
-### Backend
-
+### 5. Start workers (optional but needed for scraping & alerts)
 ```bash
-cd backend  (or from root)
-pip install -r backend/requirements.txt
-uvicorn backend.api.main:app --reload --port 8000
-# → http://localhost:8000/api/docs
+cd backend
+celery -A workers.celery_app worker --beat --loglevel=info
 ```
 
-### CRM
-
+### 6. Test it works
 ```bash
-# Terminal A — CRM Backend
-pip install -r crm/backend/requirements.txt
-uvicorn crm.backend.api.main:app --reload --port 8001
+# Health check
+curl http://localhost:8000/api/health
 
-# Terminal B — CRM Frontend
-cd crm/frontend
-npm install && npm run dev
-# → http://localhost:5173
+# Natural language search — India
+curl "http://localhost:8000/api/search/nl?q=2BHK+under+50+lakhs+Bangalore&country=india"
+
+# Natural language search — UK
+curl "http://localhost:8000/api/search/nl?q=flat+in+London+under+%C2%A3400k&country=uk"
+
+# Trigger manual data ingest (replace ADMIN_KEY from .env)
+curl -X POST "http://localhost:8000/api/admin/ingest?country=uk&admin_key=your-admin-key"
 ```
 
 ---
 
-## 🔑 Environment Variables
+## ⚠️ Gemini Model Fix
 
-### `frontend/.env`
-```env
-VITE_GEMINI_KEY=your_gemini_api_key      # aistudio.google.com
-VITE_MAPS_KEY=your_google_maps_key       # console.cloud.google.com
-VITE_API_BASE=http://localhost:8000      # Backend URL
-VITE_CRM_URL=http://localhost:5173       # CRM URL
+The model `v1/gemini-1.5-flash-latest` is **deprecated** and returns 404.
+
+**Use this endpoint instead:**
+```
+https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=YOUR_KEY
 ```
 
-### `backend/.env`
-```env
-GEMINI_API_KEY=your_gemini_api_key
-GOOGLE_MAPS_API_KEY=your_maps_key
-ALLOWED_ORIGINS=http://localhost:3000
-PORT=8000
+**Test your key:**
+```bash
+curl 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=YOUR_KEY' \
+  -H 'Content-Type: application/json' -X POST \
+  -d '{"contents":[{"parts":[{"text":"Hello"}]}]}'
+```
+
+| Error Code | Cause | Fix |
+|------------|-------|-----|
+| 404 | Wrong model name or `/v1/` endpoint | Use `/v1beta/gemini-2.0-flash` |
+| 403 | API key invalid | Check key at aistudio.google.com |
+| 400 | Bad request body | Verify JSON structure |
+| 429 | Rate limited | Wait 1s between requests (free tier: 60/min) |
+
+---
+
+## 🏗️ Architecture
+
+```
+User Query
+    ↓
+Gemini NL Parser  →  Structured Filters
+    ↓
+FAISS Vector Index  →  Top-K Candidates
+    ↓
+PostgreSQL Filter  →  Ranked Results
+    ↓
+Optional: Gemini RAG Response
+    ↓
+React Frontend
+```
+
+**Stack:**
+- **Backend:** FastAPI + SQLAlchemy + PostgreSQL + Redis + Celery
+- **AI:** Gemini 2.0 Flash + FAISS + sentence-transformers (all-MiniLM-L6-v2)
+- **Scraping:** BeautifulSoup + httpx (99acres, MagicBricks, Rightmove, Zoopla)
+- **Frontend:** React 18 + Vite + Leaflet.js
+- **Workers:** Celery Beat (scrape every 6h, FAISS rebuild nightly, alerts every 30min)
+
+---
+
+## 📁 File Structure
+
+```
+urbannest-ai/
+├── backend/
+│   ├── api/main.py              # FastAPI app — all routes
+│   ├── ai/
+│   │   ├── gemini_client.py     # Gemini 2.0 Flash client (FIXED model)
+│   │   ├── query_parser.py      # NL → structured filters
+│   │   └── rag_pipeline.py      # FAISS + Gemini RAG
+│   ├── agents/
+│   │   ├── scraper_agent.py     # 99acres + Rightmove scrapers
+│   │   ├── cleaning_agent.py    # Dedup + normalise → DB ingest
+│   │   ├── alert_agent.py       # Alert matching + email notify
+│   │   └── quality_agent.py     # Data quality monitoring
+│   ├── db/
+│   │   ├── models.py            # SQLAlchemy ORM models
+│   │   └── migrations/          # Alembic migrations
+│   ├── services/
+│   │   └── country_config.py    # India/UK config + price formatting
+│   └── workers/celery_app.py    # Scheduled automation tasks
+├── frontend/
+│   └── src/
+│       ├── pages/
+│       │   ├── Home.jsx         # Landing page
+│       │   ├── Search.jsx       # NL + filter search
+│       │   ├── Map.jsx          # Leaflet map view
+│       │   ├── Advisor.jsx      # AI chat advisor
+│       │   └── Alerts.jsx       # Alert management
+│       └── services/
+│           ├── gemini.js        # Gemini client (FIXED)
+│           └── api.js           # Backend API calls
+├── docker-compose.yml
+└── .env.example
 ```
 
 ---
 
-## 🌐 Deployment
+## 🌍 Deployment
 
-See `DEPLOYMENT.md` for full guide:
-- **Frontend** → Vercel (Root: `frontend`)
-- **Backend** → Render (Build: `pip install -r backend/requirements.txt`)
-- **CRM Frontend** → Vercel (Root: `crm/frontend`)
-- **CRM Backend** → Render (Build: `pip install -r crm/backend/requirements.txt`)
+### Backend → Render.com
+1. Create a new **Web Service** on Render
+2. Connect your GitHub repo
+3. Set **Build Command:** `pip install -r backend/requirements.txt`
+4. Set **Start Command:** `uvicorn backend.api.main:app --host 0.0.0.0 --port $PORT`
+5. Add environment variables from `.env.example`
+6. Add a **PostgreSQL** database and **Redis** instance
+7. Copy the connection URLs to env vars
+
+### Worker → Render.com
+1. Create a **Background Worker** service (same repo)
+2. **Start Command:** `celery -A workers.celery_app worker --beat --loglevel=info`
+3. Same environment variables as the web service
+
+### Frontend → Vercel
+```bash
+cd frontend
+npm run build
+vercel --prod
+```
+Set in Vercel project settings:
+- `VITE_GEMINI_KEY` = your Gemini API key
+- `VITE_API_BASE`  = https://your-backend.onrender.com
 
 ---
 
-## 🐛 Bug Fixes Applied
+## 🔍 API Reference
 
-1. **Property Advisor crash** — Fixed JSON parsing error with regex extraction + complete fallback dataset
-2. **Missing frontend** — Built entire main frontend from scratch (was empty)
-3. **No error boundaries** — All AI calls now have try/catch with graceful fallbacks
-4. **Package name** — Updated from `uk-realestate-frontend` to `metroflats-pro-frontend`
-5. **Hardcoded values** — All prices/data now dynamically generated per city/area
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | Health check + property count |
+| `/api/countries` | GET | All supported countries & config |
+| `/api/search/nl?q=...&country=uk` | GET | Natural language search |
+| `/api/search/filter` | GET | Filter-based search |
+| `/api/properties/featured` | GET | Featured listings |
+| `/api/properties/{id}` | GET | Property detail |
+| `/api/properties/{id}/similar` | GET | Similar properties (FAISS) |
+| `/api/favorites` | GET/POST/DELETE | Saved properties |
+| `/api/alerts` | GET/POST/DELETE | Property alerts |
+| `/api/ai/advisor` | POST | AI chat response |
+| `/api/ai/valuation` | POST | AI property valuation |
+| `/api/ai/market` | GET | Market intelligence |
+| `/api/admin/ingest` | POST | Trigger data scraping |
+| `/api/admin/rebuild-index` | POST | Rebuild FAISS index |
+| `/ws/alerts/{user_id}` | WebSocket | Real-time alert delivery |
+
+---
+
+## 🔐 Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GEMINI_API_KEY` | ✅ | Google AI Studio key |
+| `VITE_GEMINI_KEY` | ✅ | Same key for frontend |
+| `DATABASE_URL` | ✅ | PostgreSQL connection string |
+| `REDIS_URL` | ✅ | Redis connection string |
+| `SECRET_KEY` | ✅ | JWT signing secret |
+| `ADMIN_KEY` | ✅ | Admin API protection |
+| `ALLOWED_ORIGINS` | ✅ | CORS allowed origins |
+| `RAPIDAPI_KEY` | Optional | Zoopla API access |
+| `SMTP_*` | Optional | Email alert delivery |
+
+---
+
+## 📝 License
+
+MIT — build on it, deploy it, extend it.

@@ -1,0 +1,57 @@
+services:
+  # FastAPI Backend
+  - type: web
+    name: urbannest-api
+    env: python
+    buildCommand: "pip install -r backend/requirements.txt"
+    startCommand: "uvicorn backend.api.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /api/health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: urbannest-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: urbannest-redis
+          type: redis
+          property: connectionString
+      - key: ALLOWED_ORIGINS
+        value: https://urbannest-frontend.vercel.app
+      - key: ADMIN_KEY
+        generateValue: true
+      - key: SECRET_KEY
+        generateValue: true
+      - key: FAISS_INDEX_PATH
+        value: /data/faiss.index
+
+  # Celery Worker
+  - type: worker
+    name: urbannest-worker
+    env: python
+    buildCommand: "pip install -r backend/requirements.txt"
+    startCommand: "celery -A workers.celery_app worker --beat --loglevel=info --concurrency=2"
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: urbannest-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: urbannest-redis
+          type: redis
+          property: connectionString
+
+databases:
+  - name: urbannest-db
+    databaseName: urbannest
+    user: urbannest
+    plan: free
+
+  - name: urbannest-redis
+    type: redis
+    plan: free
